@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: commodities_cpp
+Version: 0.1.0
+Summary: C++ kernel for energy commodity trading platform
+Requires-Python: >=3.9
+Requires-Dist: pybind11>=2.10

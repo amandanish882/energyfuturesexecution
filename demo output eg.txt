@@ -1,0 +1,393 @@
+============================================================
+  STEP 1: Build the Discount Curve
+============================================================
+13:11:35 | module_a_curves.data_loader | INFO | FRED API initialized successfully
+13:11:38 | module_a_curves.data_loader | INFO | Fetched live data from FRED for 2024-12-31
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+Curve built: 62 nodes, max tenor = 30.0Y
+Max repricing error: 0.0000 bps
+Build time: 1.4 ms
+
+Key rates:
+  2Y par: 4.250%  |  zero: 4.206%  |  D(2): 0.919320
+  5Y par: 4.380%  |  zero: 4.345%  |  D(5): 0.804733
+  10Y par: 4.580%  |  zero: 4.570%  |  D(10): 0.633165
+  30Y par: 4.780%  |  zero: 4.744%  |  D(30): 0.240925
+
+============================================================
+  STEP 2: Price a Portfolio
+============================================================
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+Swap                                  NPV ($)    Par (%)
+==========================================================
+RCV 4.20% 2Y N=20MM           -18,983     4.250%  
+PAY 4.40% 5Y N=15MM           -13,374     4.380%  
+RCV 4.60% 10Y N=10MM            16,019     4.580% 
+RCV 4.80% 30Y N=5MM            15,880     4.780%  
+==========================================================
+TOTAL PORTFOLIO NPV                      -459     
+
+============================================================
+  STEP 3: Compute Risk (DV01, KR01, Convexity)    
+============================================================
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_b_pricing.risk_analytics | INFO | RiskAnalytics initialised: 9 instruments, val_date=2024-12-31
+Swap                          DV01 ($)    Convexity
+----------------------------------------------------
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+RCV 2Y N=20MM          -3,794   92,236,710
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+PAY 5Y N=15MM           6,691 -349,069,734        
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+RCV 10Y N=10MM          -8,017  767,769,661       
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+RCV 30Y N=5MM          -7,959 1,854,673,512       
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:38 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:38 | module_b_pricing.risk_analytics | INFO | Portfolio risk: 4 swaps, total DV01=-13078.83, tenors with risk: 9/9
+
+Portfolio Net DV01: $-13,079
+
+============================================================
+  STEP 4: Carry & Rolldown — The Morning Sheet    
+============================================================
+
+Carry + Rolldown Morning Sheet (annualized bps, receive-fixed at par):
+
+        1d     7d    30d    90d
+2Y    -0.2   -0.2   -0.3   -0.4
+3Y   -14.9  -14.9  -14.9  -15.1
+5Y    73.7   73.8   74.0   74.6
+7Y   103.6  103.7  104.0  104.8
+10Y  148.2  148.3  148.8  150.0
+20Y  667.2  668.6  674.1  688.5
+30Y -347.9 -347.7 -346.9 -344.9
+
+Best Carry Trades (30-day horizon, ranked by annualized bps):
+
+ tenor  par_rate_pct  carry_bps  rolldown_bps  total_bps  annualized_bps
+    20          4.86       2.53         52.87      55.40          674.05
+    10          4.58       0.23         12.00      12.23          148.75
+     7          4.48      -0.59          9.14       8.55          104.03
+     5          4.38      -1.41          7.50       6.08           74.01
+     2          4.25      -2.48          2.46      -0.02           -0.27
+     3          4.27      -2.32          1.09      -1.23          -14.94
+    30          4.78       1.87        -30.39     -28.51         -346.93
+
+============================================================
+  STEP 5: Scenario Analysis — Butterflies, Steepeners, Flatteners
+============================================================
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+13:11:39 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:39 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+
+Portfolio P&L by Scenario (bps of notional per swap):
+
+                                             2Y     5Y    10Y     30Y
+Parallel +25bp                            -47.3  110.8 -198.1  -386.6
+Parallel -25bp                             47.6 -112.2  202.8   409.8
+Parallel +100bp                          -187.4  434.6 -764.6 -1421.7
+Parallel -100bp                           192.0 -457.9  841.5  1795.0
+Bull steepener (2s10s +50bp)               41.2  -74.8   67.4  -395.5
+Bear flattener (2s10s -50bp)              -41.0   74.0  -66.4   398.8
+Bear steepener (rates up, long end more)  -24.0   74.1 -185.4  -765.6
+Butterfly: wings up, belly down            -5.7  -66.9   72.5  -238.3
+Butterfly: wings down, belly up             5.7   66.8  -71.8   238.1
+
+Portfolio Total P&L by Scenario:
+--------------------------------------------------
+  Parallel +25bp                             -521.1 bps
+  Parallel -25bp                             +548.0 bps
+  Parallel +100bp                           -1939.1 bps
+  Parallel -100bp                           +2370.6 bps
+  Bull steepener (2s10s +50bp)               -361.7 bps
+  Bear flattener (2s10s -50bp)               +365.4 bps
+  Bear steepener (rates up, long end more)   -900.9 bps
+  Butterfly: wings up, belly down            -238.4 bps
+  Butterfly: wings down, belly up            +238.9 bps
+13:11:40 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:40 | module_b_pricing.swap_pricer | INFO | SwapPricer initialised with DiscountCurve(val_date=2024-12-31, nodes=62, max_T=30.0Y, method=log_linear) (C++ kernel)
+
+Custom 2s5s10s Butterfly Scenario (wings +10, belly -20 bps):
+swap  pnl_bps
+  2Y   -18.95
+  5Y   -89.19
+ 10Y   -80.30
+ 30Y   -79.00
+Portfolio total: -267.44 bps
+
+============================================================
+  STEP 6: Generate RFQs & Train Win Probability Model
+============================================================
+13:11:41 | module_c_quoter.rfq_generator | INFO | Generating 5000 RFQs from 2024-01-02 to 2024-06-28 (seed=42)
+13:11:41 | module_c_quoter.rfq_generator | INFO | Generated 5000 RFQs | hit rate 29.54% | tenors [np.int64(2), np.int64(3), np.int64(5), np.int64(7), np.int64(10), np.int64(20), np.int64(30)]
+13:11:41 | module_c_quoter.rfq_generator | INFO | summary_stats | 5000 RFQs | overall hit rate 29.54%
+Generated 5000 RFQs
+Hit rate: 29.5%
+Avg spread: 3.50 bps
+Avg notional: 51.3 MM
+13:11:41 | module_c_quoter.win_probability | INFO | Temporal split: 3500 train / 1500 test (70% / 30%)
+13:11:42 | module_c_quoter.win_probability | INFO | Training complete | train_auc=0.7186 | test_auc=0.7004 | accuracy=0.7247 | brier=0.1841
+
+Win Model: AUC=0.700, Accuracy=0.725, Brier=0.1841
+
+============================================================
+  STEP 7: Run the Auto-Quoter (Backtest)
+============================================================
+13:11:42 | module_c_quoter.quote_optimizer | INFO | backtest | n_rfqs=100 | total_E[PnL]=73.58 bps | avg_spread=3.43 bps | avg_P(hit)=0.274 | guardrails=0/100
+Backtest Results (100 RFQs):
+  Total E[PnL]:         73.58 bps
+  Avg optimal spread:   3.43 bps
+  Avg P(hit) at optimal: 27.4%
+  Guardrails triggered: 0/100
+13:11:42 | module_c_quoter.quote_optimizer | INFO | quote_vs_flat | n_rfqs=100 | flat_spread=3.0 bps | mean_opt_spread=3.43 bps | mean_improvement=0.0230 bps
+
+Optimizer vs Flat 3bps:
+  Mean improvement: 0.0230 bps/trade
+  % trades improved: 98.0%
+
+============================================================
+  STEP 8: P&L Analysis (Markout Decomposition)    
+============================================================
+P&L Summary (1477 filled trades):
+  Mean P&L:        3.43 bps
+  Median P&L:      2.89 bps
+  Std Dev:         7.29 bps
+  % Profitable:    79.7%
+  Sharpe Ratio:    0.47
+  Mean Edge:       2.84 bps
+  Mean Hedge Cost: -0.33 bps
+
+============================================================
+  STEP 9: Summary Dashboard
+============================================================
+
+============================================================
+  STEP 10: C++ Kernel Benchmark
+============================================================
+C++ pricing_kernel loaded: C:\Users\amand\OneDrive\Quant 300\Projects 12 Feb\Project 1 quoter\shared\cpp_kernel\pricing_kernel.cp314-win_amd64.pyd    
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+13:11:43 | module_a_curves.curve_bootstrapper | INFO | C++ bootstrap complete: 62 nodes, max_T=30.0Y
+
+Bootstrap Benchmark (100 iterations):
+  C++ kernel: 1.22 ms/iteration
+
+============================================================
+  DEMO COMPLETE
+============================================================
+All modules executed successfully (C++ kernel active).
+Close the plot windows to exit.

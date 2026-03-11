@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=45", "pybind11>=2.10"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "commodities_cpp"
+version = "0.1.0"
+description = "C++ kernel for energy commodity trading platform"
+requires-python = ">=3.9"
+dependencies = ["pybind11>=2.10"]
+
+[tool.setuptools]
+packages = []
