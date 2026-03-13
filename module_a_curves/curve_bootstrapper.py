@@ -74,15 +74,15 @@ class ForwardCurve:
         self.product = product
         self.spot_price = spot_price if spot_price is not None else float(forward_prices[0])
 
-        # Build interpolator on pseudo discount factors F(t)/F(0)
-        pseudo_dfs = self.forward_prices / self.forward_prices[0]
+        # Build interpolator on pseudo discount factors F(t)/S
+        pseudo_dfs = self.forward_prices / self.spot_price
 
         if interpolation_method == "monotone_convex":
             self._interp = MonotoneConvexInterpolator(self.times, pseudo_dfs)
         else:
             self._interp = LogLinearInterpolator(self.times, pseudo_dfs)
 
-        self._base_price = self.forward_prices[0]
+        self._base_price = self.spot_price
 
     def forward_price(self, t):
         """Return the interpolated forward price at a given tenor.
@@ -281,7 +281,8 @@ class ForwardCurveBootstrapper:
     def __init__(self, interpolation_method="log_linear", **kwargs):
         self.interpolation_method = interpolation_method
 
-    def bootstrap(self, settlements, valuation_date="2024-12-31", product="CL"):
+    def bootstrap(self, settlements, valuation_date="2024-12-31", product="CL",
+                  spot_price=None):
         """Build a ForwardCurve from a list of settlement records.
 
         Accepts settlement records as either FuturesSettlement instances or
@@ -297,6 +298,9 @@ class ForwardCurveBootstrapper:
                 Defaults to "2024-12-31".
             product: Commodity ticker symbol used when the product cannot be
                 inferred from a settlement record. Defaults to "CL".
+            spot_price: Optional float spot price from a physical market
+                assessment (e.g. EIA daily spot). When None, the front
+                futures price is used as a proxy.
 
         Returns:
             A ForwardCurve constructed from the sorted settlement prices using
@@ -326,7 +330,7 @@ class ForwardCurveBootstrapper:
 
         return ForwardCurve(
             times, prices, valuation_date, self.interpolation_method,
-            product, spot_price=prices[0],
+            product, spot_price=spot_price if spot_price is not None else prices[0],
         )
 
     def validate(self, curve, settlements):

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 Energy Commodities Systematic Trading Platform -- Full Demo Pipeline
-Usage: python run_full_demo.py [--no-plots]
+Usage: python run_full_demo.py
 """
 
 import sys
 import time
-import argparse
 from pathlib import Path
 from datetime import date
 
@@ -16,7 +15,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import numpy as np
 import pandas as pd
 
-from config import ENERGY_PRODUCTS, RESULTS_DIR, DATA_DIR, PLOT_DIR
+from config import ENERGY_PRODUCTS, RESULTS_DIR, DATA_DIR, PLOT_DIR, DEFAULT_VALUATION_DATE
 from module_a_curves.data_loader import CommodityDataLoader
 from module_a_curves.curve_bootstrapper import (
     ForwardCurve, ForwardCurveBootstrapper, FuturesSettlement,
@@ -38,12 +37,10 @@ from shared.kdb_interface import KDBInterface, KDBConfig
 from shared.databento_loader import DatabentoLoader, DatabentoConfig
 from shared.plot_style import apply_style, COLOURS
 
-parser = argparse.ArgumentParser(description="Energy Commodities Demo")
-parser.add_argument("--no-plots", action="store_true")
-args = parser.parse_args()
+SHOW_PLOTS = True
 
 start_time = time.time()
-valuation_date = date(2026, 3, 10)
+valuation_date = date.fromisoformat(DEFAULT_VALUATION_DATE)
 
 print("\n" + "=" * 72)
 print("  ENERGY COMMODITIES SYSTEMATIC TRADING PLATFORM")
@@ -60,7 +57,7 @@ for d in [RESULTS_DIR, DATA_DIR, PLOT_DIR]:
     Path(d).mkdir(parents=True, exist_ok=True)
     print(f"  Directory ready: {d}")
 
-if not args.no_plots:
+if SHOW_PLOTS:
     apply_style()
 
 print(f"\n  Valuation date: {valuation_date}")
@@ -72,12 +69,16 @@ print(f"  Products: {list(ENERGY_PRODUCTS.keys())}")
 # ═══════════════════════════════════════════════════════════════════════
 print(f"\n{'='*72}\n  STEP 1: DATA LOADING -- EIA INVENTORY & FUTURES STRIPS\n{'='*72}\n")
 
-loader = CommodityDataLoader()
+from config import get_databento_api_key as _get_db_key, get_eia_api_key as _get_eia_key
+loader = CommodityDataLoader(
+    eia_api_key=_get_eia_key(),
+    databento_api_key=_get_db_key(),
+)
 
 print("--- Futures Strip Data ---")
 strips = {}
 for product in ["CL", "HO", "RB", "NG"]:
-    strip_data = loader.get_strip_for_date(product=product)
+    strip_data = loader.get_strip_for_date(date=DEFAULT_VALUATION_DATE, product=product)
     strips[product] = strip_data
     if strip_data and len(strip_data) > 0:
         print(f"  {product}: {len(strip_data)} contract months loaded")
@@ -87,16 +88,34 @@ for product in ["CL", "HO", "RB", "NG"]:
     else:
         print(f"  {product}: No data available (set EIA_API_KEY or populate cache)")
 
+print("\n--- EIA Spot Prices ---")
+spot_prices = {}
+for product in ["CL", "HO", "RB", "NG"]:
+    spot = loader.fetch_spot_price(product=product, date=DEFAULT_VALUATION_DATE)
+    if spot is not None:
+        spot_prices[product] = spot
+        print(f"  {product}: ${spot:.4f}")
+    else:
+        print(f"  {product}: No spot data (using front futures as proxy)")
+
 print("\n--- EIA Inventory Data ---")
-inventory = loader.fetch_inventory_history()
+inventory = loader.fetch_inventory_history(end=DEFAULT_VALUATION_DATE)
 if inventory is not None and len(inventory) > 0:
     print(f"  Loaded {len(inventory)} inventory observations")
 else:
     print("  No inventory data available (set EIA_API_KEY for live data)")
 
-print("\n--- Inventory Z-Scores ---")
+print("\n--- Natural Gas Storage ---")
+ng_storage = loader.fetch_ng_storage_history(end=DEFAULT_VALUATION_DATE)
+if ng_storage is not None and len(ng_storage) > 0:
+    print(f"  Loaded {len(ng_storage)} NG storage observations")
+    print(f"  Latest: {ng_storage.iloc[-1]['ng_storage_bcf']:.0f} Bcf")
+else:
+    print("  No NG storage data available (set EIA_API_KEY for live data)")
+
+print("\n--- Inventory Z-Scores (Petroleum + NG Storage) ---")
 try:
-    zscores = loader.get_inventory_zscore()
+    zscores = loader.get_inventory_zscore(date=DEFAULT_VALUATION_DATE)
     for series, z in zscores.items():
         print(f"  {series}: z-score = {z:+.2f}")
 except Exception as e:
@@ -124,7 +143,11 @@ for product in ["CL", "HO", "RB", "NG"]:
             )
             for item in strip
         ]
-        curve = bootstrapper.bootstrap(settlements, product=product)
+        spot = spot_prices.get(product)  # None if EIA spot unavailable
+        curve = bootstrapper.bootstrap(
+            settlements, valuation_date=DEFAULT_VALUATION_DATE,
+            product=product, spot_price=spot,
+        )
     else:
         times = [(i + 1) / 12 for i in range(12)]
         # Realistic synthetic curves: steep front contango flattening out,
@@ -137,11 +160,15 @@ for product in ["CL", "HO", "RB", "NG"]:
         }
         base, offsets = _synth.get(product, (72.50, [0.10 * i for i in range(12)]))
         prices = [base + o for o in offsets]
-        curve = ForwardCurve(times, prices, product=product)
+        spot = spot_prices.get(product)
+        curve = ForwardCurve(times, prices, product=product,
+                             spot_price=spot if spot is not None else prices[0])
 
     curves[product] = curve
+    spot_label = f"spot={curve.spot_price:.4f}" if product in spot_prices else f"spot(proxy)={curve.spot_price:.4f}"
     print(f"  {product}: {len(curve.times)} tenors, "
-          f"front={curve.forward_price(curve.times[0]):.2f}, "
+          f"front={curve.forward_price(curve.times[0]):.4f}, "
+          f"{spot_label}, "
           f"contango={'Yes' if curve.is_contango() else 'No'}")
 
 cl_curve = curves["CL"]
@@ -202,14 +229,14 @@ for pos in portfolio:
     print(f"  {pos}")
 
 print("\n--- Portfolio Mark-to-Market ---")
-mtm_df = pricer.portfolio_mtm(portfolio[:3])
+mtm_df = pricer.portfolio_mtm(portfolio)
 print(mtm_df.to_string(index=False))
 print(f"\n  Total CL MTM: ${mtm_df['mtm_usd'].sum():,.0f}")
 
 print("\n--- Parallel Delta (CL curve) ---")
 try:
     total_delta = 0.0
-    for pos in portfolio[:3]:
+    for pos in portfolio:
         delta = risk.parallel_delta(pos)
         total_delta += delta
         print(f"  {pos.ticker}: delta = ${delta:,.0f}")
@@ -221,7 +248,7 @@ print("\n--- Scenario Analysis ---")
 scenario_engine = ScenarioEngine(bootstrapper, cl_settlements)
 for name, scenario in list(STANDARD_SCENARIOS.items())[:4]:
     try:
-        results = scenario_engine.run_scenario(scenario, portfolio[:3])
+        results = scenario_engine.run_scenario(scenario, portfolio)
         total_pnl = results["scenario_pnl"].sum() if "scenario_pnl" in results.columns else 0
         print(f"  {name:25s} -> P&L: ${total_pnl:>12,.0f}")
     except Exception as e:
@@ -280,6 +307,40 @@ elif composite < -0.5:
     print(f"\n  >> BEARISH bias ({composite:+.2f}): consider reducing/shorting CL")
 else:
     print(f"\n  >> NEUTRAL ({composite:+.2f}): no strong directional signal")
+
+print("\n--- Composite Alpha Model (NG) ---")
+ng_alpha_model = CompositeAlphaModel.default_ng_model()
+
+ng_curve = curves.get("NG")
+ng_front = ng_curve.forward_price(ng_curve.times[0]) if ng_curve else 3.80
+ng_deferred = ng_curve.forward_price(ng_curve.times[-1]) if ng_curve else 4.10
+
+# Use actual NG storage level if available, otherwise a reasonable default
+ng_storage_level = 1800.0  # default March Bcf
+if ng_storage is not None and len(ng_storage) > 0:
+    ng_storage_level = ng_storage.iloc[-1]["ng_storage_bcf"]
+
+ng_alpha_result = ng_alpha_model.compute_composite(
+    forward_curve=ng_curve,
+    front_price=ng_front,
+    deferred_price=ng_deferred,
+    ng_storage_level=ng_storage_level,
+    month=3,
+    price=ng_front,
+)
+
+print("  Signal breakdown:")
+for name, val in ng_alpha_result.items():
+    bar = "+" * max(0, int(val * 5)) + "-" * max(0, int(-val * 5))
+    print(f"    {name:20s}: {val:+.3f}  {bar}")
+
+ng_composite = ng_alpha_result["composite"]
+if ng_composite > 0.5:
+    print(f"\n  >> BULLISH bias ({ng_composite:+.2f}): consider adding long NG exposure")
+elif ng_composite < -0.5:
+    print(f"\n  >> BEARISH bias ({ng_composite:+.2f}): consider reducing/shorting NG")
+else:
+    print(f"\n  >> NEUTRAL ({ng_composite:+.2f}): no strong directional signal")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -420,11 +481,13 @@ try:
     kdb.insert_forwards(pd.DataFrame(fwd_rows))
     print(f"  Stored {len(fwd_rows)} forward curve points")
 
-    kdb.insert_inventory(pd.DataFrame([{
-        "dt": str(valuation_date), "series": "crude_stocks",
-        "val": 440.0, "unt": "MMbbl",
-    }]))
-    print(f"  Stored inventory snapshot")
+    kdb.insert_inventory(pd.DataFrame([
+        {"dt": str(valuation_date), "series": "crude_stocks",
+         "val": 440.0, "unt": "MMbbl"},
+        {"dt": str(valuation_date), "series": "ng_storage",
+         "val": ng_storage_level, "unt": "Bcf"},
+    ]))
+    print(f"  Stored inventory snapshots (crude + NG storage)")
     print(f"  Table counts: {kdb.table_counts()}")
 except Exception as e:
     print(f"  KDB+ connection failed: {e}")
@@ -475,7 +538,7 @@ print(f"  RFQs processed:  {len(rfqs)}")
 print(f"  Quotes made:     {len(quotes)}")
 print(f"  Elapsed time:    {elapsed:.1f}s")
 
-if not args.no_plots:
+if SHOW_PLOTS:
     import matplotlib.pyplot as plt
     print("\n--- Generating Plots ---")
 

@@ -8,6 +8,7 @@ summaries using a bootstrapped ForwardCurve.
 
 import sys
 from pathlib import Path
+from datetime import date, datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -158,8 +159,9 @@ class FuturesPricer:
     def mark_to_market(self, position):
         """Compute the mark-to-market P&L for a single futures position.
 
-        Looks up the current forward price at the tenor closest to
-        the position's expiry and calculates the unrealised P&L as:
+        Computes the exact tenor from the curve's valuation date to
+        the contract's expiry, retrieves the interpolated forward price,
+        and calculates the unrealised P&L as:
             MTM = (F_current - entry_price) * contracts
                   * contract_size * direction_sign
 
@@ -285,42 +287,58 @@ class FuturesPricer:
         return self._curve.forward_price(t)
 
     def _find_tenor(self, position):
-        """Find the tenor in the curve that best matches a position's expiry.
+        """Compute the year-fraction tenor from the curve's valuation date
+        to the position's contract expiry, and return it directly so that
+        ``forward_price(t)`` can interpolate the price at the exact tenor.
 
-        Attempts to extract the CME month-code character from the
-        position's ticker (third character, e.g. ``'Z'`` in
-        ``'CLZ26'``), converts it to a calendar month number via
-        MONTH_CODE, approximates the time to expiry as
-        ``month_number / 12`` years, and returns the closest tenor
-        available in the curve. Falls back to the first non-zero
-        tenor when the ticker does not contain a recognisable month
-        code.
+        Extracts the month code and two-digit year from the ticker
+        (e.g. ``'CLZ26'`` → December 2026), approximates the contract
+        expiry as the 20th of the **preceding** calendar month (CME
+        energy futures expire ~20th of month before delivery), and
+        computes the day-count fraction relative to the curve's
+        valuation date.
 
         Args:
             position: FuturesPosition instance whose ``ticker``
-                attribute is inspected for the month code.
+                attribute is inspected for the month/year code.
 
         Returns:
-            Float tenor in years from the curve's ``times`` list that
-            best approximates the position's expiry. Returns
-            ``times[0]`` if no positive tenor is available, or 0.25
-            if ``times`` is empty.
+            Float tenor in years.  Falls back to ``times[0]`` when no
+            positive tenor is available, or 0.25 when ``times`` is empty.
         """
         ticker = position.ticker
         times = self._curve.times
 
-        # Try to extract month code from ticker (e.g. "CLZ26" -> month_code='Z' -> month=12)
-        if len(ticker) >= 3:
+        # Parse valuation date from the curve
+        try:
+            val_date = date.fromisoformat(str(self._curve.valuation_date))
+        except (ValueError, TypeError):
+            val_date = None
+
+        # Try to extract month code and year from ticker
+        # e.g. "CLZ26" -> month_char='Z', year_str='26'
+        if len(ticker) >= 4 and val_date is not None:
             month_char = ticker[2].upper()
             month_num = MONTH_CODE.get(month_char)
-            if month_num is not None:
-                # Approximate time to expiry: month_num / 12 years from now
-                # Find the tenor in the curve that is closest to this approximate value
-                target_t = month_num / 12.0
-                valid_times = [t for t in times if t > 1e-6]
-                if valid_times:
-                    closest = min(valid_times, key=lambda t: abs(t - target_t))
-                    return closest
+            year_str = ticker[3:]
+
+            if month_num is not None and year_str.isdigit():
+                year = 2000 + int(year_str)
+
+                # CME energy futures expire ~20th of month before delivery
+                # e.g. CLK26 (May delivery) expires ~Apr 20
+                expiry_month = month_num - 1 if month_num > 1 else 12
+                expiry_year = year if month_num > 1 else year - 1
+                expiry_date = date(expiry_year, expiry_month, 20)
+
+                target_t = (expiry_date - val_date).days / 365.0
+
+                # If the contract has already expired, clamp to a small
+                # positive tenor so we still return a sensible price
+                if target_t <= 0:
+                    target_t = 1.0 / 365.0
+
+                return target_t
 
         # Fallback: return the first non-zero tenor
         for t in times:

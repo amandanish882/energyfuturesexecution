@@ -14,11 +14,13 @@ class BuildExt(build_ext):
         opts = []
         if ct == "unix":
             opts.append("-std=c++17")
-            opts.append("-O3")
+            opts.append("-O0")
+            opts.append("-g")
             opts.append("-fPIC")
         elif ct == "msvc":
             opts.append("/std:c++17")
-            opts.append("/O2")
+            opts.append("/Od")
+            opts.append("/Zi")
 
         for ext in self.extensions:
             ext.extra_compile_args = opts
