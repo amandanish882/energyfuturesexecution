@@ -75,7 +75,7 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
 
 # Defaults
-DEFAULT_VALUATION_DATE = "2024-12-31"
+DEFAULT_VALUATION_DATE = "2026-03-09"
 BUMP_SIZE_USD = 1.0
 
 # Energy products

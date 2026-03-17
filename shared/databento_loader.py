@@ -14,8 +14,11 @@ schema is ``mbp-10`` (Market-By-Price with 10 depth levels).
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 import databento as db
+
+_CACHE_DIR = Path(__file__).resolve().parents[1] / "data" / "databento_cache"
 
 
 TICKERS = ["CL", "HO", "RB", "NG"]
@@ -56,6 +59,9 @@ def front_month_symbol(product, date_str):
         month = 1
         year += 1
     code = MONTH_CODES[month]
+    # CME switched NG to 2-digit year symbols from Jul 2025 (NGN25)
+    if product == "NG" and (year > 2025 or (year == 2025 and month >= 7)):
+        return f"{product}{code}{year % 100}"
     return f"{product}{code}{year % 10}"
 
 
@@ -98,34 +104,45 @@ class DatabentoLoader:
         self._config = config
         self._client = db.Historical(config.api_key)
 
-    def load_book_snapshots(self, symbol, date, n_snapshots=100):
+    def load_book_snapshots(self, symbol, date, n_snapshots=None):
         """Load L2 book snapshots for a symbol on a given date.
 
-        Retrieves MBP-10 data from the NYMEX open (09:00 ET) to
-        close (14:30 ET) window, limited to ``n_snapshots`` rows.
+        Checks local parquet cache first. If not cached, fetches from
+        Databento API and saves to cache for future runs.
 
         Args:
             symbol: CME Globex contract symbol (e.g. ``'CLH5'``).
-                Use ``front_month_symbol`` to build this from a
-                product code and date.
             date: Date string in ``YYYY-MM-DD`` format.
             n_snapshots: Maximum number of book update rows to
-                return. Defaults to 100.
+                return. If None, returns the full session.
 
         Returns:
-            pandas.DataFrame with MBP-10 columns including
-            ``bid_px_00`` through ``bid_px_09``, corresponding
-            ``ask_px_*`` and size columns, and ``ts_event``.
+            pandas.DataFrame with MBP-10 columns.
         """
-        data = self._client.timeseries.get_range(
+        # Check cache
+        limit_tag = f"_{n_snapshots}" if n_snapshots else "_full"
+        cache_file = _CACHE_DIR / f"{symbol}_{date}_mbp-10{limit_tag}.parquet"
+        if cache_file.exists():
+            return pd.read_parquet(cache_file)
+
+        # Fetch from API
+        kwargs = dict(
             dataset=self._config.dataset,
             schema=self._config.schema,
             symbols=[symbol],
             start=f"{date}T09:00",
             end=f"{date}T14:30",
-            limit=n_snapshots,
         )
-        return data.to_df()
+        if n_snapshots is not None:
+            kwargs["limit"] = n_snapshots
+        data = self._client.timeseries.get_range(**kwargs)
+        df = data.to_df()
+
+        # Save to cache
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(cache_file)
+
+        return df
 
     def load_trades(self, symbol, date, n_trades=500):
         """Load trade records for a symbol on a given date.

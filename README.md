@@ -282,67 +282,84 @@ $$P(\text{win}) = \sigma(\mathbf{X} \boldsymbol{\beta}) = \frac{1}{1 + e^{-\math
 | `volatility` | Implied vol — wider markets tolerate wider spreads |
 | `product_*` | One-hot encoded product dummies (CL, HO, RB, NG) |
 
-`quote_optimizer.py` searches a **50-point grid** of candidate spreads from the base spread to 3× base and picks the one that maximizes expected P&L:
+`quote_optimizer.py` searches a **50-point grid** of candidate spreads and picks the one that maximizes expected P&L, with alpha-informed directional skew applied **inside** the grid search so win probability and revenue reflect the actual quoted price:
 
-$$\max_m \;\; \mathbb{E}[\text{PnL}](m) = P(\text{win} \mid m) \cdot \text{revenue}(m) - \bigl(1 - P(\text{win} \mid m)\bigr) \cdot \text{opp\_cost}$$
+$$\max_s \;\; \mathbb{E}[\text{PnL}](s) = P(\text{win} \mid s_{\text{skew}}) \cdot \bigl[\text{revenue}(s_{\text{skew}}) - \text{hedge\_cost} - \text{inv\_penalty}\bigr]$$
+
+**Key features:**
+- **Almgren-Chriss hedge cost**: permanent + temporary impact (deterministic only, timing risk excluded) for entry + unwind at longer horizon
+- **Alpha-informed skew**: additive shift `skew = clip(alpha, -1, 1) × base_spread` tightens quotes in the alpha direction, widens the other side
+- **Dollar-delta inventory penalty**: `λ(Δ_new² - Δ_old²)` where `Δ = contracts × contract_size × mid_price`, comparable across products
+- **Running delta**: batch processing tracks accumulated inventory so the penalty rewards offsetting trades
+- **Adaptive grid**: extends to 2× breakeven spread for large orders where hedge costs exceed base revenue
 
 ```python
 from module_b_trading.quote_optimizer import QuoteOptimizer
 from module_b_trading.win_probability import WinProbabilityModel
 
 win_model = WinProbabilityModel()
-optimizer = QuoteOptimizer(win_model=win_model)
+optimizer = QuoteOptimizer(
+    win_model=win_model,
+    alpha_skews={"CL": 0.35, "HO": 0.245, "RB": 0.245, "NG": -0.12},
+    current_delta={"CL": 0, "HO": 0, "RB": 0, "NG": 0},
+    risk_lambda=5e-12,
+)
 quotes = optimizer.optimize_batch(rfqs, mid_prices)
 ```
 
-| Metric | Value |
-|--------|-------|
-| RFQs generated | 50 |
-| Avg win probability | ~39% |
-| Total E[PnL] | ~$13,000 |
-| Grid resolution | 50 points |
-| Max spread multiple | 3.0× |
+| Metric | Optimizer | Flat (no alpha) |
+|--------|-----------|-----------------|
+| Avg win probability | ~36% | ~37% |
+| Total E[PnL] | ~$4,900 | ~$4,500 |
+| Alpha + inventory edge | +$400 | — |
 
 ---
 
 ### 6 · Execution Planning (Almgren-Chriss)
 
-`market_impact.py` implements the **Almgren-Chriss (2001)** optimal liquidation framework, separating market impact into temporary and permanent components calibrated to NYMEX energy futures microstructure.
+`market_impact.py` implements the **Almgren-Chriss (2001)** optimal liquidation framework with the three-part cost decomposition calibrated to NYMEX energy futures microstructure.
 
-**Temporary impact** — proportional to the instantaneous trading rate raised to a power:
+**Permanent impact** — quadratic in order size, reflecting lasting price shift:
 
-$$\text{temp} = \eta \cdot \sigma \cdot \left(\frac{n_{\text{slice}}}{V_{\text{slice}}}\right)^{\gamma}$$
+$$\text{Permanent} = \gamma \cdot \frac{Q^2}{2 V_{\text{day}}}$$
 
-where $\eta = 0.1$ is the temporary impact coefficient, $\sigma$ is daily volatility, and $\gamma = 0.5$ produces concave (sub-linear) impact.
+**Temporary impact** — proportional to execution rate, reverts after trading:
 
-**Permanent impact** — proportional to total volume as a fraction of ADV:
+$$\text{Temporary} = \eta \cdot \frac{Q}{V_{\text{day}} \cdot T} \cdot \sigma$$
 
-$$\text{perm} = \lambda \cdot \sigma \cdot \frac{N}{V_{\text{ADV}}}$$
+**Timing risk** — uncertainty from holding an unfinished position:
 
-**Optimal trajectory** — the risk-adjusted execution schedule that minimizes expected cost plus variance penalty:
+$$\text{Timing Risk} = \sigma \cdot \sqrt{\frac{Q \cdot T}{V_{\text{day}}}}$$
 
-$$x(t) = \frac{\sinh\bigl(\kappa(1 - t)\bigr)}{\sinh(\kappa)}, \qquad \kappa = \sqrt{\frac{\rho \, \sigma^2}{\eta}}$$
+**Total expected IS** = Permanent + Temporary + Timing Risk. The optimal horizon $T^*$ minimises this total (temporary decreases with longer $T$, timing risk increases):
 
-Higher risk aversion $\rho$ front-loads execution; when $\kappa T \to 0$ the schedule degenerates to TWAP. With the default calibration ($\rho = 5000$, $\eta = 0.1$, $\sigma_{\text{CL}} = 2.2\%$), the model produces $\kappa \approx 4.92$, giving a visibly concave (aggressively front-loaded) trajectory.
+$$\kappa = \sqrt{\frac{\lambda \cdot \sigma^2}{\eta}}, \qquad T^* = \frac{1}{\kappa} \cosh^{-1}\!\left(1 + \kappa \cdot \frac{Q}{V_{\text{day}}}\right)$$
+
+**Optimal trajectory** — the sinh-shaped execution schedule parameterised by $\kappa$:
+
+$$x(t) = \frac{\sinh\bigl(\kappa(1 - t)\bigr)}{\sinh(\kappa)}$$
+
+Higher $\kappa$ front-loads execution; $\kappa \to 0$ degenerates to TWAP. Default calibration: $\eta = 0.1$, $\gamma = 0.01$, $\lambda = 0.01$.
 
 ```python
 from module_c_execution.market_impact import AlmgrenChrissModel
 
-model = AlmgrenChrissModel()  # eta=0.1, lambda=0.05, gamma=0.5, rho=5000
-est = model.estimate_impact("CL", 100)
-# CL 100 lots: cost=$613, 0.9bps, participation=0.2%
+model = AlmgrenChrissModel()  # eta=0.1, gamma=0.01, risk_aversion=0.01
+est = model.estimate_impact("CL", 100, price=72.50)
+# CL 100 lots: perm=1.43bps, temp=0.03bps, risk=1.59bps, total=3.05bps
+# Optimal horizon: 95 min
 ```
 
-**Impact estimates:**
+**Impact estimates (100 lots each):**
 
-| Product | Size | Contract Size | ADV | Daily Vol |
-|---------|------|---------------|-----|-----------|
-| CL | 1,000 bbl | 350K lots | 2.2% |
-| HO | 42,000 gal | 120K lots | 2.0% |
-| RB | 42,000 gal | 100K lots | 2.4% |
-| NG | 10,000 MMBtu | 250K lots | 3.5% |
+| Product | Contract Size | ADV | Daily Vol | Total Cost | Optimal Horizon |
+|---------|---------------|-----|-----------|------------|-----------------|
+| CL | 1,000 bbl | 350K | 2.2% | 3.1 bps | 95 min |
+| HO | 42,000 gal | 120K | 2.0% | 2.8 bps | 120 min |
+| RB | 42,000 gal | 100K | 2.4% | 3.6 bps | 120 min |
+| NG | 10,000 MMBtu | 250K | 3.5% | 3.8 bps | 77 min |
 
-**Execution strategies** — TWAP, VWAP (volume-weighted), and Adaptive (urgency-parameterized) schedulers produce child order slices that the `OrderSimulator` fills against a synthetic order book.
+**Execution strategies** — TWAP, VWAP (volume-weighted), and Adaptive ($\kappa$-parameterised sinh trajectory) schedulers produce child order slices. The `OrderSimulator` fills them against real Databento L2 order book snapshots with horizon-aware snapshot selection. L2 data is cached locally as parquet files for fast subsequent runs.
 
 <p align="center"><img src="output/plots/execution_analysis.png" alt="Execution Analysis" width="700"/></p>
 

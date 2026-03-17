@@ -46,7 +46,7 @@ class RiskAnalytics:
             compute the base mark-to-market value before any bump.
     """
 
-    def __init__(self, bootstrapper, base_settlements, valuation_date="2024-12-31",
+    def __init__(self, bootstrapper, base_settlements, valuation_date="2026-03-09",
                  product="CL"):
         """Initialise the risk analytics engine.
 

@@ -84,7 +84,7 @@ class ScenarioEngine:
         base_pricer: FuturesPricer wrapping ``base_curve``.
     """
 
-    def __init__(self, bootstrapper, base_settlements, valuation_date="2024-12-31",
+    def __init__(self, bootstrapper, base_settlements, valuation_date="2026-03-09",
                  product="CL"):
         """Initialise the scenario engine and bootstrap the base curve.
 

@@ -14,40 +14,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-NYMEX_VOLUME_PROFILE = {
-    "09:00": 0.12,
-    "09:30": 0.11,
-    "10:00": 0.10,
-    "10:30": 0.09,
-    "11:00": 0.08,
-    "11:30": 0.07,
-    "12:00": 0.07,
-    "12:30": 0.08,
-    "13:00": 0.09,
-    "13:30": 0.10,
-    "14:00": 0.09,
-}
+# NYMEX intraday volume profile (30-min buckets, 09:00-14:30 ET)
+_NYMEX_VOLUME_PROFILE = np.array([
+    0.12, 0.11, 0.10, 0.09, 0.08, 0.07, 0.07, 0.08, 0.09, 0.10, 0.09
+])
+_NYMEX_VOLUME_PROFILE = _NYMEX_VOLUME_PROFILE / _NYMEX_VOLUME_PROFILE.sum()
 
 
 class ExecutionSlice:
-    """A single child order slice within a parent execution schedule.
-
-    Represents one discrete unit of a parent order broken down by time
-    period, holding both the absolute contract quantity and the fractional
-    contribution to the total order for that slice.
-
-    Attributes:
-        slice_id: Zero-based integer index of this slice within its
-            parent schedule.
-        time_label: Human-readable time string (``"HH:MM"``) indicating
-            when this slice should be submitted.
-        target_fraction: Fraction of the total parent order allocated to
-            this slice (0.0 – 1.0).
-        target_contracts: Absolute number of contracts to trade during
-            this slice, rounded to the nearest integer.
-        cumulative_fraction: Running cumulative fraction of the parent
-            order executed up to and including this slice (0.0 – 1.0).
-    """
+    """A single child order slice within a parent execution schedule."""
 
     def __init__(self, slice_id, time_label, target_fraction,
                  target_contracts, cumulative_fraction):
@@ -59,22 +34,7 @@ class ExecutionSlice:
 
 
 class ExecutionSchedule:
-    """Complete execution schedule decomposing a parent order into child slices.
-
-    Aggregates all ExecutionSlice objects for a single parent order and
-    provides metadata about the strategy used and the overall execution
-    window. Supports DataFrame export for analysis and visualisation.
-
-    Attributes:
-        product: Commodity ticker symbol the schedule applies to.
-        total_contracts: Total number of contracts in the parent order.
-        strategy: Human-readable name of the scheduling algorithm used
-            (e.g. ``"TWAP"``, ``"VWAP"``).
-        slices: Ordered list of ExecutionSlice objects comprising the
-            schedule.
-        total_duration_min: Total elapsed time of the schedule in
-            minutes from the first to the last slice submission.
-    """
+    """Complete execution schedule decomposing a parent order into child slices."""
 
     def __init__(self, product, total_contracts, strategy,
                  slices=None, total_duration_min=0.0):
@@ -85,16 +45,6 @@ class ExecutionSchedule:
         self.total_duration_min = total_duration_min
 
     def to_dataframe(self):
-        """Export the execution schedule to a pandas DataFrame.
-
-        Converts each ExecutionSlice in the schedule to a row,
-        preserving all slice attributes as named columns.
-
-        Returns:
-            DataFrame with one row per slice and columns:
-            ``slice_id``, ``time_label``, ``target_fraction``,
-            ``target_contracts``, ``cumulative_fraction``.
-        """
         return pd.DataFrame([
             {
                 "slice_id": s.slice_id,
@@ -108,259 +58,161 @@ class ExecutionSchedule:
 
 
 class ExecutionStrategy:
-    """Abstract base class for all execution scheduling strategies.
+    """Abstract base class for execution scheduling strategies."""
 
-    Concrete subclasses must implement the ``schedule`` method, which
-    decomposes a parent order into an ExecutionSchedule. The interface
-    is deliberately minimal so that TWAP, VWAP, and Adaptive schedulers
-    can be used interchangeably.
-    """
-
-    def schedule(self, product, num_contracts, n_slices=10):
-        """Generate an execution schedule for a parent order.
-
-        Subclasses must override this method to implement their specific
-        slicing logic.
-
-        Args:
-            product: Commodity ticker symbol (e.g. ``"CL"``).
-            num_contracts: Total number of contracts to execute.
-            n_slices: Desired number of child slices. Concrete
-                implementations may ignore or override this value
-                (e.g. VWAP fixes slices to the volume profile length).
-
-        Raises:
-            NotImplementedError: Always raised by the base implementation;
-                subclasses must provide their own override.
-        """
+    def schedule(self, product, num_contracts, n_slices=10, duration_min=330.0):
         raise NotImplementedError
 
 
 class TWAPScheduler(ExecutionStrategy):
-    """Time-Weighted Average Price execution scheduler.
+    """Time-Weighted Average Price: equal slices over horizon."""
 
-    Divides the parent order into equal-sized child slices spread
-    uniformly across the NYMEX session (09:00 – 14:30, 330 minutes).
-    Each slice receives an identical fraction of the total order,
-    regardless of intraday volume patterns. Any rounding residual is
-    added to the final slice to ensure full order completion.
-    """
-
-    def schedule(self, product, num_contracts, n_slices=10):
-        """Split a parent order into equal time slices.
-
-        Computes a uniform per-slice fraction, maps each slice to a
-        clock time across the 330-minute NYMEX session, and adjusts
-        the last slice for integer-rounding residuals.
-
-        Args:
-            product: Commodity ticker symbol (e.g. ``"CL"``).
-            num_contracts: Total number of contracts to execute.
-            n_slices: Number of equal time intervals to divide the
-                session into. Defaults to 10.
-
-        Returns:
-            ExecutionSchedule with ``strategy="TWAP"`` and
-            ``total_duration_min=330.0``, containing ``n_slices``
-            ExecutionSlice objects with equal target fractions.
-        """
-        fraction = 1.0 / n_slices
+    def schedule(self, product, num_contracts, n_slices=10, duration_min=330.0):
+        base = num_contracts // n_slices
+        remainder = num_contracts % n_slices
         slices = []
-        cum = 0.0
+        cum = 0
 
         for i in range(n_slices):
-            cum += fraction
-            contracts = int(round(num_contracts * fraction))
-            time_min = i * (330.0 / n_slices)
+            qty = base + (1 if i < remainder else 0)
+            cum += qty
+            time_min = i * (duration_min / n_slices)
             hour = 9 + int(time_min // 60)
             minute = int(time_min % 60)
 
             slices.append(ExecutionSlice(
                 slice_id=i,
                 time_label=f"{hour:02d}:{minute:02d}",
-                target_fraction=fraction,
-                target_contracts=contracts,
-                cumulative_fraction=min(cum, 1.0),
+                target_fraction=1.0 / n_slices,
+                target_contracts=qty,
+                cumulative_fraction=cum / num_contracts if num_contracts > 0 else 0,
             ))
-
-        executed = sum(s.target_contracts for s in slices)
-        if executed != num_contracts and slices:
-            slices[-1].target_contracts += (num_contracts - executed)
 
         return ExecutionSchedule(
             product=product,
             total_contracts=num_contracts,
             strategy="TWAP",
             slices=slices,
-            total_duration_min=330.0,
+            total_duration_min=duration_min,
         )
 
 
 class VWAPScheduler(ExecutionStrategy):
-    """Volume-Weighted Average Price execution scheduler.
-
-    Allocates each child slice a fraction of the parent order
-    proportional to the expected intraday volume at that time interval,
-    based on the NYMEX volume profile. Executing in line with volume
-    reduces expected market impact relative to a flat TWAP schedule.
-
-    Attributes:
-        _profile: Dictionary mapping ``"HH:MM"`` time labels to their
-            relative volume weights across the session.
-    """
+    """Volume-Weighted Average Price: proportional to NYMEX volume profile."""
 
     def __init__(self, volume_profile=None):
-        """Initialise the VWAP scheduler with an intraday volume profile.
+        self._profile = volume_profile if volume_profile is not None else _NYMEX_VOLUME_PROFILE
 
-        Args:
-            volume_profile: Optional dictionary mapping ``"HH:MM"``
-                time-period labels to relative volume weights. Weights
-                do not need to sum to 1.0; they are normalised
-                internally. Defaults to ``NYMEX_VOLUME_PROFILE`` if
-                ``None``.
-        """
-        self._profile = volume_profile or NYMEX_VOLUME_PROFILE
+    def schedule(self, product, num_contracts, n_slices=10, duration_min=330.0):
+        # Interpolate volume profile to n_slices points within horizon
+        profile_times = np.linspace(0, 330, len(self._profile))
+        slice_times = np.linspace(0, duration_min, n_slices, endpoint=False)
+        weights = np.interp(slice_times, profile_times, self._profile)
+        weights = weights / weights.sum()
 
-    def schedule(self, product, num_contracts, n_slices=11):
-        """Distribute a parent order according to the NYMEX intraday volume profile.
-
-        Normalises the volume profile weights and allocates contracts
-        to each time period proportionally. Integer rounding residuals
-        are absorbed into the final slice.
-
-        Args:
-            product: Commodity ticker symbol (e.g. ``"CL"``).
-            num_contracts: Total number of contracts to execute.
-            n_slices: Ignored; the number of slices is determined by
-                the length of the volume profile. Included for
-                interface compatibility with the base class.
-
-        Returns:
-            ExecutionSchedule with ``strategy="VWAP"`` and
-            ``total_duration_min=330.0``, containing one
-            ExecutionSlice per entry in the volume profile.
-        """
-        times = list(self._profile.keys())
-        weights = list(self._profile.values())
-        total_w = sum(weights)
-        fractions = [w / total_w for w in weights]
+        raw = weights * num_contracts
+        quantities = np.floor(raw).astype(int)
+        remainder = num_contracts - quantities.sum()
+        fracs = raw - quantities
+        top_idx = np.argsort(-fracs)[:int(remainder)]
+        quantities[top_idx] += 1
 
         slices = []
-        cum = 0.0
-        for i, (t, frac) in enumerate(zip(times, fractions)):
-            cum += frac
-            contracts = int(round(num_contracts * frac))
+        cum = 0
+        for i in range(n_slices):
+            qty = int(quantities[i])
+            cum += qty
+            time_min = slice_times[i]
+            hour = 9 + int(time_min // 60)
+            minute = int(time_min % 60)
+
             slices.append(ExecutionSlice(
                 slice_id=i,
-                time_label=t,
-                target_fraction=frac,
-                target_contracts=contracts,
-                cumulative_fraction=min(cum, 1.0),
+                time_label=f"{hour:02d}:{minute:02d}",
+                target_fraction=float(weights[i]),
+                target_contracts=qty,
+                cumulative_fraction=cum / num_contracts if num_contracts > 0 else 0,
             ))
-
-        executed = sum(s.target_contracts for s in slices)
-        if executed != num_contracts and slices:
-            slices[-1].target_contracts += (num_contracts - executed)
 
         return ExecutionSchedule(
             product=product,
             total_contracts=num_contracts,
             strategy="VWAP",
             slices=slices,
-            total_duration_min=330.0,
+            total_duration_min=duration_min,
         )
 
 
 class AdaptiveScheduler(ExecutionStrategy):
-    """Urgency-adjusted execution scheduler built on top of VWAP.
+    """Almgren-Chriss optimal trajectory: sinh-based urgency schedule.
 
-    Modifies a baseline VWAP schedule by scaling each slice's contract
-    quantity up or down according to an urgency score. High-urgency
-    orders front-load execution by inflating early slice sizes; low-urgency
-    orders back-load execution to reduce market impact. Any unfilled
-    residual contracts are appended to the final slice.
-
-    Attributes:
-        _max_part: Maximum participation rate cap (currently stored for
-            reference but not enforced per-slice in this implementation).
-        _urgency: Scalar urgency score in [0.0, 1.0]. Values above 0.7
-            accelerate execution; values below 0.3 slow it down.
-        _vwap: Underlying VWAPScheduler used to produce the base schedule
-            that is then adjusted by urgency scaling.
+    kappa controls urgency: higher = more front-loaded execution.
+    kappa=0 degenerates to TWAP, kappa=1.5 is moderate, kappa=3+ is aggressive.
     """
 
-    def __init__(self, max_participation=0.10, urgency=0.5):
-        """Initialise the adaptive scheduler with participation and urgency settings.
+    def __init__(self, kappa=1.5, n_slices=10):
+        self.kappa = kappa
+        self.n_slices = n_slices
 
-        Args:
-            max_participation: Maximum fraction of estimated period volume
-                the scheduler is allowed to consume in a single slice.
-                Stored for reference; defaults to 0.10 (10 %).
-            urgency: Execution urgency score on a [0.0, 1.0] scale.
-                Values above 0.7 inflate slice sizes to accelerate
-                execution; values below 0.3 deflate them to reduce
-                market impact. Defaults to 0.5 (neutral).
-        """
-        self._max_part = max_participation
-        self._urgency = urgency
-        self._vwap = VWAPScheduler()
+    def _trajectory(self, n):
+        """Compute cumulative execution trajectory [0, ..., 1.0]."""
+        tau = np.linspace(0, 1, n + 1)
+        if abs(self.kappa) < 1e-6:
+            return tau
+        remaining = np.sinh(self.kappa * (1 - tau)) / np.sinh(self.kappa)
+        return 1.0 - remaining
 
-    def schedule(self, product, num_contracts, n_slices=11):
-        """Generate an urgency-adjusted execution schedule.
+    def schedule(self, product, num_contracts, n_slices=None, duration_min=None):
+        if n_slices is None:
+            n_slices = self.n_slices
 
-        Builds a baseline VWAP schedule and then scales each slice's
-        contract quantity by a factor derived from ``_urgency``. Remaining
-        contracts not allocated due to integer truncation or early
-        depletion of ``remaining`` are added to the last slice.
+        # Compute optimal horizon if not provided
+        if duration_min is None:
+            from module_c_execution.market_impact import AlmgrenChrissModel
+            model = AlmgrenChrissModel()
+            duration_min = model.optimal_execution_horizon(product, num_contracts)
 
-        Args:
-            product: Commodity ticker symbol (e.g. ``"CL"``).
-            num_contracts: Total number of contracts to execute.
-            n_slices: Passed through to the underlying VWAPScheduler;
-                effectively determines the number of slices via the
-                volume profile length. Defaults to 11.
+        traj = self._trajectory(n_slices)
+        quantities = np.diff(np.round(traj * num_contracts)).astype(int)
+        diff = num_contracts - quantities.sum()
+        if diff != 0:
+            quantities[-1] += diff
 
-        Returns:
-            ExecutionSchedule with ``strategy`` set to
-            ``"Adaptive(urgency=<value>)"`` and
-            ``total_duration_min=330.0``, containing one
-            ExecutionSlice per VWAP period with urgency-adjusted
-            contract counts.
-        """
-        base = self._vwap.schedule(product, num_contracts, n_slices)
+        slices = []
+        cum = 0
+        minutes_per_slice = duration_min / n_slices
 
-        adjusted_slices = []
-        remaining = num_contracts
-        cum = 0.0
+        for i in range(n_slices):
+            qty = int(quantities[i])
+            cum += qty
+            time_min = i * minutes_per_slice
+            hour = 9 + int(time_min // 60)
+            minute = int(time_min % 60)
 
-        for s in base.slices:
-            if self._urgency > 0.7:
-                target = int(round(s.target_contracts * (1 + self._urgency)))
-            elif self._urgency < 0.3:
-                target = int(round(s.target_contracts * (1 - 0.3 * (1 - self._urgency))))
-            else:
-                target = s.target_contracts
-
-            target = min(target, remaining)
-            target = max(target, 0)
-            remaining -= target
-            cum += target / num_contracts if num_contracts > 0 else 0
-
-            adjusted_slices.append(ExecutionSlice(
-                slice_id=s.slice_id,
-                time_label=s.time_label,
-                target_fraction=target / num_contracts if num_contracts > 0 else 0,
-                target_contracts=target,
-                cumulative_fraction=min(cum, 1.0),
+            slices.append(ExecutionSlice(
+                slice_id=i,
+                time_label=f"{hour:02d}:{minute:02d}",
+                target_fraction=float(quantities[i]) / max(num_contracts, 1),
+                target_contracts=qty,
+                cumulative_fraction=cum / num_contracts if num_contracts > 0 else 0,
             ))
-
-        if remaining > 0 and adjusted_slices:
-            adjusted_slices[-1].target_contracts += remaining
 
         return ExecutionSchedule(
             product=product,
             total_contracts=num_contracts,
-            strategy=f"Adaptive(urgency={self._urgency:.1f})",
-            slices=adjusted_slices,
-            total_duration_min=330.0,
+            strategy=f"Adaptive(kappa={self.kappa:.1f})",
+            slices=slices,
+            total_duration_min=float(duration_min),
         )
+
+
+def compare_strategies(product, num_contracts, kappa=1.5, duration_min=330.0):
+    """Compare all three strategies side by side."""
+    return {
+        "TWAP": TWAPScheduler().schedule(product, num_contracts,
+                                          duration_min=duration_min),
+        "VWAP": VWAPScheduler().schedule(product, num_contracts,
+                                          duration_min=duration_min),
+        "Adaptive": AdaptiveScheduler(kappa=kappa).schedule(
+            product, num_contracts, duration_min=duration_min),
+    }

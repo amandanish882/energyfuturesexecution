@@ -60,84 +60,58 @@ ENERGY_FUTURES = {
     },
 }
 
+SESSION_MINUTES = 330.0  # NYMEX 09:00-14:30 ET
+
 
 class ImpactEstimate:
-    """Immutable result record produced by the Almgren-Chriss impact model.
-
-    Captures all cost components for a single order estimation run,
-    including temporary and permanent impact expressed both in USD and
-    basis points, together with the participation rate and number of
-    execution slices recommended by the model.
+    """Result record from the Almgren-Chriss impact model.
 
     Attributes:
-        product: Commodity ticker symbol (e.g. ``"CL"``, ``"NG"``).
-        num_contracts: Total number of contracts in the order.
-        participation_rate: Fraction of estimated window volume the order
-            represents (0.0 – 1.0).
-        temporary_impact: Temporary price impact as a fraction of price,
-            caused by short-term liquidity consumption.
-        permanent_impact: Permanent price impact as a fraction of price,
-            reflecting lasting information or supply/demand shift.
-        total_cost_usd: Aggregate execution cost in US dollars.
-        cost_bps: Total cost expressed in basis points of notional value.
-        slices: Recommended number of child slices for execution.
+        product: Commodity ticker symbol.
+        num_contracts: Total contracts in the order.
+        participation_rate: Fraction of window volume consumed.
+        temporary_bps: Temporary impact in basis points.
+        permanent_bps: Permanent impact in basis points.
+        total_cost_bps: Expected cost (permanent + temporary) in bps.
+        timing_risk_bps: 1-sigma execution risk in bps (NOT added to cost).
+        total_cost_usd: Expected cost in USD.
+        optimal_horizon_min: Almgren-Chriss optimal execution horizon.
     """
 
     def __init__(self, product, num_contracts, participation_rate,
-                 temporary_impact, permanent_impact, total_cost_usd,
-                 cost_bps, slices):
+                 temporary_bps, permanent_bps, total_cost_bps,
+                 timing_risk_bps, total_cost_usd, optimal_horizon_min):
         self.product = product
         self.num_contracts = num_contracts
         self.participation_rate = participation_rate
-        self.temporary_impact = temporary_impact
-        self.permanent_impact = permanent_impact
+        self.temporary_bps = temporary_bps
+        self.permanent_bps = permanent_bps
+        self.total_cost_bps = total_cost_bps
+        self.timing_risk_bps = timing_risk_bps
         self.total_cost_usd = total_cost_usd
-        self.cost_bps = cost_bps
-        self.slices = slices
+        self.optimal_horizon_min = optimal_horizon_min
 
 
 class AlmgrenChrissModel:
     """Almgren-Chriss optimal execution and market impact model.
 
-    Implements the continuous-time Almgren-Chriss (2001) framework for
-    optimal liquidation of a large position in a futures market. Separates
-    market impact into a temporary component (proportional to the
-    instantaneous trading rate) and a permanent component (proportional to
-    total volume traded), and derives the risk-adjusted optimal trajectory
-    that minimises expected cost plus a variance penalty.
+    Separates market impact into:
+    - Temporary impact: proportional to instantaneous trading rate
+    - Permanent impact: γ * Q² / (2 * V_day) — quadratic in order size
+    - Temporary impact: η * (Q / (V_day * T)) * σ — depends on execution rate
+    - Timing risk: σ * sqrt(Q * T / V_day) — grows with horizon
+
+    Total expected IS = Permanent + Temporary + Timing Risk.
+    The optimal horizon T* minimises this total.
 
     Attributes:
-        _eta: Temporary impact coefficient controlling the sensitivity of
-            instantaneous impact to the per-slice trading rate.
-        _lambda: Permanent impact coefficient controlling the sensitivity
-            of long-run price shift to overall order size relative to ADV.
-        _gamma: Power-law exponent applied to the participation rate when
-            computing temporary impact.
-        _risk_aversion: Risk-aversion parameter used in the optimal
-            trajectory calculation; higher values front-load execution.
+        _eta: Temporary impact coefficient.
+        _gamma: Permanent impact coefficient.
+        _risk_aversion: Lambda in the A-C objective for optimal horizon.
     """
 
-    def __init__(self, eta=0.1, lambda_=0.05, gamma=0.5, risk_aversion=5000.0):
-        """Initialise the Almgren-Chriss model with calibration parameters.
-
-        Args:
-            eta: Temporary impact coefficient. Controls how strongly
-                the per-slice trading rate affects the instantaneous
-                execution price. Defaults to 0.1.
-            lambda_: Permanent impact coefficient. Controls the
-                proportion of daily volatility that translates into
-                a lasting price shift per unit of ADV traded.
-                Defaults to 0.05.
-            gamma: Power-law exponent applied to the normalised
-                per-slice trading rate when computing temporary impact.
-                Values below 1.0 produce concave (sub-linear) impact.
-                Defaults to 0.5.
-            risk_aversion: Quadratic risk-aversion coefficient used in
-                the hyperbolic optimal trajectory formula. Higher values
-                accelerate early execution. Defaults to 5000.0.
-        """
+    def __init__(self, eta=0.1, gamma=0.01, risk_aversion=0.01):
         self._eta = eta
-        self._lambda = lambda_
         self._gamma = gamma
         self._risk_aversion = risk_aversion
 
@@ -145,155 +119,120 @@ class AlmgrenChrissModel:
                         execution_horizon_min=60.0, price=None):
         """Estimate market impact cost for a single futures order.
 
-        Computes temporary and permanent impact components using the
-        Almgren-Chriss model calibrated to the product's average daily
-        volume and daily volatility. Temporary impact is derived from the
-        per-slice participation rate; permanent impact scales with the
-        order's fraction of average daily volume.
-
-        Args:
-            product: Commodity ticker symbol (``"CL"``, ``"HO"``,
-                ``"RB"``, or ``"NG"``). Falls back to ``"CL"`` specs
-                if unrecognised.
-            num_contracts: Total number of contracts to execute.
-            execution_horizon_min: Total time available for execution,
-                in minutes. Determines the number of slices and the
-                volume available during the window. Defaults to 60.0.
-            price: Reference mid-market price used to convert fractional
-                impact into USD cost and basis points. If ``None``,
-                defaults to 70.0.
+        Uses the proper Almgren-Chriss formulas:
+            Permanent = γ * Q² / (2 * V_day)
+            Temporary = η * (Q / (V_day * T)) * σ
+            Timing    = σ * sqrt(Q * T / V_day)
 
         Returns:
-            ImpactEstimate containing participation_rate,
-            temporary_impact, permanent_impact, total_cost_usd,
-            cost_bps, and slices fields.
+            ImpactEstimate with all three components. Total cost
+            includes all three (permanent + temporary + timing risk).
         """
         spec = ENERGY_FUTURES.get(product, ENERGY_FUTURES["CL"])
         adv = spec["avg_daily_volume"]
         sigma = spec["daily_vol_pct"]
         cs = spec["contract_size"]
 
-        session_minutes = 330.0
-        volume_in_window = adv * (execution_horizon_min / session_minutes)
-        participation = num_contracts / volume_in_window if volume_in_window > 0 else 1.0
+        # T in fraction of trading day
+        T = execution_horizon_min / SESSION_MINUTES
+        Q = num_contracts
 
-        slices = max(1, int(execution_horizon_min))
-        contracts_per_slice = num_contracts / slices
-        slice_volume = adv / session_minutes
+        volume_in_window = adv * T
+        participation = Q / volume_in_window if volume_in_window > 0 else 1.0
+        participation = min(participation, 1.0)
 
-        if slice_volume > 0:
-            temp_impact = self._eta * sigma * (contracts_per_slice / slice_volume) ** self._gamma
-        else:
-            temp_impact = 0.0
+        # Almgren-Chriss three-part cost decomposition (all in fractional units)
+        permanent = self._gamma * Q**2 / (2 * max(adv, 1))
+        temporary = self._eta * (Q / (max(adv, 1) * max(T, 1e-6))) * sigma
+        timing_risk = sigma * np.sqrt(Q * max(T, 1e-6) / max(adv, 1))
 
-        perm_impact = self._lambda * sigma * (num_contracts / adv)
+        # Convert to bps
+        permanent_bps = permanent * 1e4
+        temporary_bps = temporary * 1e4
+        timing_risk_bps = timing_risk * 1e4
+        total_cost_bps = permanent_bps + temporary_bps + timing_risk_bps
 
+        # USD conversion
         ref_price = price or 70.0
-        notional = ref_price * num_contracts * cs
+        notional = ref_price * Q * cs
+        total_cost_usd = total_cost_bps / 1e4 * notional
 
-        temp_cost = temp_impact * ref_price * num_contracts * cs
-        perm_cost = perm_impact * ref_price * num_contracts * cs
-        total_cost = temp_cost + perm_cost
-        cost_bps = (total_cost / notional * 10000) if notional > 0 else 0.0
+        # Optimal horizon
+        optimal_horizon = self.optimal_execution_horizon(product, num_contracts)
 
         return ImpactEstimate(
             product=product,
             num_contracts=num_contracts,
-            participation_rate=participation,
-            temporary_impact=temp_impact,
-            permanent_impact=perm_impact,
-            total_cost_usd=total_cost,
-            cost_bps=cost_bps,
-            slices=slices,
+            participation_rate=round(participation, 4),
+            temporary_bps=round(temporary_bps, 4),
+            permanent_bps=round(permanent_bps, 4),
+            total_cost_bps=round(total_cost_bps, 4),
+            timing_risk_bps=round(timing_risk_bps, 4),
+            total_cost_usd=round(total_cost_usd, 2),
+            optimal_horizon_min=round(optimal_horizon, 1),
         )
 
-    def optimal_trajectory(self, product, num_contracts, n_slices=10):
-        """Compute the Almgren-Chriss optimal execution trajectory.
+    def optimal_execution_horizon(self, product, num_contracts):
+        """Compute Almgren-Chriss optimal execution horizon.
 
-        Derives the risk-adjusted optimal liquidation schedule as a
-        cumulative fraction of total order size over normalised time
-        [0, 1]. The trajectory uses a hyperbolic sine formula
-        parameterised by kappa, which balances market impact cost against
-        execution risk. When kappa * T is negligible the schedule
-        degenerates to a linear (TWAP) trajectory.
-
-        Args:
-            product: Commodity ticker symbol (``"CL"``, ``"HO"``,
-                ``"RB"``, or ``"NG"``). Daily volatility is read from
-                the product spec; falls back to ``"CL"`` if unrecognised.
-            num_contracts: Total number of contracts to execute. Used
-                contextually; the returned trajectory is expressed as
-                fractions independent of this value.
-            n_slices: Number of discrete time steps in the trajectory.
-                Defaults to 10.
+        T* = (1/κ) * cosh⁻¹(1 + κ * Q / V_day)
+        H* = T* × 330 minutes
 
         Returns:
-            NumPy array of length ``n_slices + 1`` containing the
-            cumulative fraction of the order executed at each time
-            step, starting at 0.0 and ending at 1.0.
+            Optimal horizon in minutes, clipped to [5, 330].
         """
         spec = ENERGY_FUTURES.get(product, ENERGY_FUTURES["CL"])
         sigma = spec["daily_vol_pct"]
+        adv = spec["avg_daily_volume"]
 
-        kappa = np.sqrt(self._risk_aversion * sigma**2 / self._eta)
-        tau = np.linspace(0, 1, n_slices + 1)
+        if self._risk_aversion < 1e-15 or sigma < 1e-15:
+            return 60.0
+        kappa = np.sqrt(self._risk_aversion * sigma**2 / self._eta) if self._eta > 0 else 1.0
+        t_star = np.arccosh(1 + kappa * num_contracts / max(adv, 1)) / kappa
+        return float(np.clip(t_star * SESSION_MINUTES, 5.0, SESSION_MINUTES))
 
-        kT = kappa * 1.0
-        if abs(np.sinh(kT)) < 1e-10:
-            trajectory = 1.0 - tau
-        else:
-            trajectory = np.sinh(kappa * (1.0 - tau)) / np.sinh(kT)
-
-        cum_executed = 1.0 - trajectory
-        return cum_executed
-
-    def compare_strategies(self, product, num_contracts, horizons_min=None):
-        """Compare market impact cost across multiple execution horizons.
-
-        Calls ``estimate_impact`` for each horizon in ``horizons_min``
-        and assembles the results into a single DataFrame for easy
-        comparison and plotting. Longer horizons reduce participation
-        rate and temporary impact at the cost of greater market risk.
+    def optimal_trajectory(self, product, num_contracts, n_slices=10,
+                           kappa=1.5):
+        """Compute sinh-shaped optimal execution trajectory.
 
         Args:
-            product: Commodity ticker symbol (``"CL"``, ``"HO"``,
-                ``"RB"``, or ``"NG"``).
-            num_contracts: Total number of contracts to execute.
-            horizons_min: List of execution horizons in minutes to
-                evaluate. Defaults to ``[5, 15, 30, 60, 120, 240]``
-                if ``None``.
+            kappa: Urgency parameter. Higher = more front-loaded.
+                Passed directly (not derived from risk_aversion).
 
         Returns:
-            DataFrame with one row per horizon and columns:
-            ``horizon_min``, ``participation_rate``,
-            ``temporary_impact``, ``permanent_impact``,
-            ``total_cost_usd``, ``cost_bps``, ``slices``.
+            Cumulative fraction array of length n_slices + 1,
+            starting at 0.0 and ending at 1.0.
+        """
+        tau = np.linspace(0, 1, n_slices + 1)
+        if abs(kappa) < 1e-6:
+            return tau  # degenerates to TWAP
+        remaining = np.sinh(kappa * (1.0 - tau)) / np.sinh(kappa)
+        return 1.0 - remaining
+
+    def compare_strategies(self, product, num_contracts,
+                           horizons_min=None, price=None):
+        """Compare impact cost and timing risk across execution horizons.
+
+        Returns DataFrame with impact_bps, risk_bps (separate, not summed),
+        and total_cost_bps (expected cost only).
         """
         if horizons_min is None:
             horizons_min = [5, 15, 30, 60, 120, 240]
 
         rows = []
         for h in horizons_min:
-            est = self.estimate_impact(product, num_contracts, h)
+            est = self.estimate_impact(product, num_contracts, h, price=price)
             rows.append({
                 "horizon_min": h,
                 "participation_rate": est.participation_rate,
-                "temporary_impact": est.temporary_impact,
-                "permanent_impact": est.permanent_impact,
-                "total_cost_usd": est.total_cost_usd,
-                "cost_bps": est.cost_bps,
-                "slices": est.slices,
+                "impact_bps": est.total_cost_bps,
+                "risk_bps": est.timing_risk_bps,
+                "impact_cost_usd": est.total_cost_usd,
+                "slices": max(1, int(h)),
             })
 
         return pd.DataFrame(rows)
 
     def __repr__(self):
-        """Return an unambiguous string representation of the model instance.
-
-        Returns:
-            String showing the model class name together with the values
-            of the three primary calibration parameters: ``eta``,
-            ``lambda``, and ``gamma``.
-        """
-        return (f"AlmgrenChrissModel(eta={self._eta}, lambda={self._lambda}, "
-                f"gamma={self._gamma})")
+        return (f"AlmgrenChrissModel(eta={self._eta}, gamma={self._gamma}, "
+                f"risk_aversion={self._risk_aversion})")

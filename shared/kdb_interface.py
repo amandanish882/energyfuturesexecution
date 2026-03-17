@@ -10,6 +10,8 @@ Tables:
     inventory: EIA inventory releases keyed by (date, series).
     fills: Trade execution fills keyed by fill_id.
     tick_data: L1/L2 tick data keyed by (timestamp, product).
+    l2_book: Level 2 order book snapshots (MBP-10) with 10 price/size
+        levels per side.
 """
 
 import numpy as np
@@ -38,6 +40,29 @@ _SCHEMAS = {
         " bid_px:`float$(); ask_px:`float$();"
         " bid_sz:`int$(); ask_sz:`int$();"
         " last_px:`float$(); last_sz:`int$())"
+    ),
+    "l2_book": (
+        "l2_book:([] ts_event:`timestamp$(); product:`symbol$();"
+        " bid_px_00:`float$(); bid_px_01:`float$();"
+        " bid_px_02:`float$(); bid_px_03:`float$();"
+        " bid_px_04:`float$(); bid_px_05:`float$();"
+        " bid_px_06:`float$(); bid_px_07:`float$();"
+        " bid_px_08:`float$(); bid_px_09:`float$();"
+        " ask_px_00:`float$(); ask_px_01:`float$();"
+        " ask_px_02:`float$(); ask_px_03:`float$();"
+        " ask_px_04:`float$(); ask_px_05:`float$();"
+        " ask_px_06:`float$(); ask_px_07:`float$();"
+        " ask_px_08:`float$(); ask_px_09:`float$();"
+        " bid_sz_00:`int$(); bid_sz_01:`int$();"
+        " bid_sz_02:`int$(); bid_sz_03:`int$();"
+        " bid_sz_04:`int$(); bid_sz_05:`int$();"
+        " bid_sz_06:`int$(); bid_sz_07:`int$();"
+        " bid_sz_08:`int$(); bid_sz_09:`int$();"
+        " ask_sz_00:`int$(); ask_sz_01:`int$();"
+        " ask_sz_02:`int$(); ask_sz_03:`int$();"
+        " ask_sz_04:`int$(); ask_sz_05:`int$();"
+        " ask_sz_06:`int$(); ask_sz_07:`int$();"
+        " ask_sz_08:`int$(); ask_sz_09:`int$())"
     ),
 }
 
@@ -121,7 +146,14 @@ class KDBInterface:
                 v = row[col]
                 if col in sym_cols:
                     vals.append(f"`{v}")
-                elif col in ("dt",):
+                elif col == "ts_event":
+                    ts = pd.Timestamp(v)
+                    if ts.tzinfo is not None:
+                        ts = ts.tz_convert("UTC").tz_localize(None)
+                    kdb_ts = (ts.strftime("%Y.%m.%dD%H:%M:%S.%f")
+                              + f"{ts.nanosecond:03d}")
+                    vals.append(f'"P"$"{kdb_ts}"')
+                elif col == "dt":
                     vals.append(f'`$"{v}"')
                 elif isinstance(v, (int, np.integer)):
                     vals.append(str(int(v)))
@@ -165,6 +197,19 @@ class KDBInterface:
             Number of rows inserted.
         """
         return self._insert_rows("trd_fills", df)
+
+    def insert_l2_books(self, df):
+        """Insert Level 2 order book snapshots into the l2_book table.
+
+        Args:
+            df: DataFrame with columns: ts_event, product,
+                bid_px_00..bid_px_09, ask_px_00..ask_px_09,
+                bid_sz_00..bid_sz_09, ask_sz_00..ask_sz_09.
+
+        Returns:
+            Number of rows inserted.
+        """
+        return self._insert_rows("l2_book", df)
 
     def query_forwards(self, product):
         """Query forward curve data for a product.
@@ -211,6 +256,30 @@ class KDBInterface:
             )
         else:
             result = self._conn.sendSync('select from trd_fills')
+        return pd.DataFrame(result)
+
+    def query_l2_books(self, product=None, limit=100):
+        """Query Level 2 order book snapshots.
+
+        Args:
+            product: Optional product code to filter by (e.g.
+                ``'CL'``). If None, returns all products.
+            limit: Maximum number of rows to return. Defaults to
+                100.
+
+        Returns:
+            pandas.DataFrame with columns ts_event, product,
+            bid_px_00..09, ask_px_00..09, bid_sz_00..09,
+            ask_sz_00..09.
+        """
+        if product:
+            result = self._conn.sendSync(
+                f'select [{limit}] from l2_book where product=`{product}',
+            )
+        else:
+            result = self._conn.sendSync(
+                f'select [{limit}] from l2_book',
+            )
         return pd.DataFrame(result)
 
     def table_counts(self):

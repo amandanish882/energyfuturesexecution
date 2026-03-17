@@ -20,8 +20,10 @@ PYBIND11_MODULE(commodities_cpp, m) {
 
     // ForwardCurve
     py::class_<ForwardCurve>(m, "ForwardCurve")
-        .def(py::init<const std::vector<double>&, const std::vector<double>&>(),
-             py::arg("times"), py::arg("prices"))
+        .def(py::init<const std::vector<double>&, const std::vector<double>&,
+                       const std::string&>(),
+             py::arg("times"), py::arg("prices"),
+             py::arg("method") = "monotone_convex")
         .def("forward_price", &ForwardCurve::forward_price, py::arg("t"))
         .def("convenience_yield", &ForwardCurve::convenience_yield,
              py::arg("t"), py::arg("spot"),
@@ -30,6 +32,7 @@ PYBIND11_MODULE(commodities_cpp, m) {
              py::arg("t1"), py::arg("t2"))
         .def("shift", &ForwardCurve::shift, py::arg("amount"))
         .def("is_contango", &ForwardCurve::is_contango)
+        .def("interpolation_method", &ForwardCurve::interpolation_method)
         .def("times", &ForwardCurve::times)
         .def("prices", &ForwardCurve::prices)
         .def("size", &ForwardCurve::size);

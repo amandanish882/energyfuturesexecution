@@ -24,6 +24,10 @@ class BuildExt(build_ext):
 
         for ext in self.extensions:
             ext.extra_compile_args = opts
+            if ct == "msvc":
+                ext.extra_link_args = ["/DEBUG"]
+            elif ct == "unix":
+                ext.extra_link_args = ["-g"]
         build_ext.build_extensions(self)
 
 

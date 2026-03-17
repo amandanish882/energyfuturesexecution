@@ -22,8 +22,7 @@ from module_a_curves.curve_bootstrapper import (
 )
 from module_a_curves.seasonal_model import SeasonalForwardCurve
 from module_b_trading.futures_pricer import FuturesPricer, FuturesPosition, CONTRACT_SPECS
-from module_b_trading.risk_analytics import RiskAnalytics
-from module_b_trading.scenario_engine import ScenarioEngine, STANDARD_SCENARIOS
+from module_b_trading.scenario_engine import STANDARD_SCENARIOS
 from module_b_trading.alpha_signals import CompositeAlphaModel
 from module_b_trading.rfq_generator import RFQGenerator
 from module_b_trading.win_probability import WinProbabilityModel
@@ -32,10 +31,13 @@ from module_b_trading.carry_rolldown import RollYieldCalculator
 from module_b_trading.markout_pnl import MarkoutAnalyzer
 from module_c_execution.market_impact import AlmgrenChrissModel, ENERGY_FUTURES
 from module_c_execution.execution_scheduler import TWAPScheduler, VWAPScheduler, AdaptiveScheduler
-from module_c_execution.order_simulator import OrderSimulator
+from module_c_execution.order_simulator import OrderSimulator, L2Book
 from shared.kdb_interface import KDBInterface, KDBConfig
 from shared.databento_loader import DatabentoLoader, DatabentoConfig
 from shared.plot_style import apply_style, COLOURS
+
+# C++ kernel
+import commodities_cpp as _cpp
 
 SHOW_PLOTS = True
 
@@ -44,7 +46,7 @@ valuation_date = date.fromisoformat(DEFAULT_VALUATION_DATE)
 
 print("\n" + "=" * 72)
 print("  ENERGY COMMODITIES SYSTEMATIC TRADING PLATFORM")
-print("  Full Demo Pipeline -- Steps 0 through 7")
+print("  Full Demo Pipeline -- Steps 0 through 8")
 print("=" * 72)
 
 
@@ -127,31 +129,23 @@ except Exception as e:
 # ═══════════════════════════════════════════════════════════════════════
 print(f"\n{'='*72}\n  STEP 2: FORWARD CURVE BOOTSTRAPPING & SEASONAL DECOMPOSITION\n{'='*72}\n")
 
-bootstrapper = ForwardCurveBootstrapper()
-curves = {}
+bootstrapper = ForwardCurveBootstrapper(interpolation_method="monotone_convex")
 
-print("--- Forward Curve Construction ---")
+# Primary curves are C++; Python curves kept only for seasonal/carry modules
+cpp_curves = {}
+cpp_pricers = {}
+py_curves = {}  # thin Python wrappers for modules needing Python ForwardCurve API
+
+print("--- Forward Curve Construction (C++ monotone convex) ---")
 for product in ["CL", "HO", "RB", "NG"]:
     strip = strips.get(product)
+    spot = spot_prices.get(product)
+
     if strip and len(strip) > 0:
-        settlements = [
-            FuturesSettlement(
-                product=item["product"],
-                contract_code=item["contract_code"],
-                settlement=item["settlement"],
-                time_to_expiry=item["time_to_expiry"],
-            )
-            for item in strip
-        ]
-        spot = spot_prices.get(product)  # None if EIA spot unavailable
-        curve = bootstrapper.bootstrap(
-            settlements, valuation_date=DEFAULT_VALUATION_DATE,
-            product=product, spot_price=spot,
-        )
+        times = [item["time_to_expiry"] for item in strip]
+        prices = [item["settlement"] for item in strip]
     else:
         times = [(i + 1) / 12 for i in range(12)]
-        # Realistic synthetic curves: steep front contango flattening out,
-        # with product-specific shapes
         _synth = {
             "CL": (72.50, [0.00, 0.80, 1.30, 1.55, 1.65, 1.68, 1.60, 1.45, 1.20, 0.85, 0.40, -0.10]),
             "HO": (2.35,  [0.00, 0.04, 0.06, 0.05, 0.02, -0.02, -0.06, -0.10, -0.13, -0.15, -0.16, -0.15]),
@@ -160,37 +154,51 @@ for product in ["CL", "HO", "RB", "NG"]:
         }
         base, offsets = _synth.get(product, (72.50, [0.10 * i for i in range(12)]))
         prices = [base + o for o in offsets]
-        spot = spot_prices.get(product)
-        curve = ForwardCurve(times, prices, product=product,
-                             spot_price=spot if spot is not None else prices[0])
 
-    curves[product] = curve
-    spot_label = f"spot={curve.spot_price:.4f}" if product in spot_prices else f"spot(proxy)={curve.spot_price:.4f}"
-    print(f"  {product}: {len(curve.times)} tenors, "
-          f"front={curve.forward_price(curve.times[0]):.4f}, "
-          f"{spot_label}, "
-          f"contango={'Yes' if curve.is_contango() else 'No'}")
+    # C++ curve: primary pricing engine
+    cpp_fc = _cpp.ForwardCurve(times, prices, "monotone_convex")
+    cpp_curves[product] = cpp_fc
+    cpp_pricers[product] = _cpp.FuturesPricer(cpp_fc)
 
+    # Python curve: needed by SeasonalForwardCurve, RollYieldCalculator, etc.
+    spot_val = spot if spot is not None else prices[0]
+    py_curve = ForwardCurve(times, prices, product=product,
+                            interpolation_method="monotone_convex",
+                            spot_price=spot_val,
+                            valuation_date=DEFAULT_VALUATION_DATE)
+    py_curves[product] = py_curve
+
+    spot_label = f"spot={spot_val:.4f}" if spot else f"spot(proxy)={spot_val:.4f}"
+    front_px = cpp_fc.forward_price(times[0])
+    contango = cpp_fc.forward_price(times[-1]) > cpp_fc.forward_price(times[0])
+    print(f"  {product}: {len(times)} tenors, "
+          f"front={front_px:.4f}, {spot_label}, "
+          f"contango={'Yes' if contango else 'No'}  [C++]")
+
+# Legacy alias — some downstream modules reference 'curves'
+curves = py_curves
 cl_curve = curves["CL"]
 
-print("\n--- Convenience Yield Extraction (CL) ---")
+print("\n--- Convenience Yield Extraction (CL, C++) ---")
 for t in [0.25, 0.5, 1.0]:
-    cy = cl_curve.convenience_yield(t)
+    cy = cpp_curves["CL"].convenience_yield(t, cl_curve.spot_price, 0.045, 0.02)
     print(f"  CY at {t:.2f}y: {cy*100:.2f}%")
 
-print("\n--- Seasonal Decomposition ---")
-try:
-    seasonal = SeasonalForwardCurve(cl_curve)
-    times_arr = np.array(cl_curve.times)
-    prices_arr = np.array([cl_curve.forward_price(t) for t in cl_curve.times])
-    seasonal.calibrate(times_arr, prices_arr)
+print("\n--- Seasonal Decomposition (All Products) ---")
+seasonal_models = {}
+for product, curve in curves.items():
+    try:
+        seasonal = SeasonalForwardCurve(curve, product=product)
+        times_arr = np.array(curve.times)
+        prices_arr = np.array([curve.forward_price(t) for t in curve.times])
+        seasonal.calibrate(times_arr, prices_arr)
+        seasonal_models[product] = seasonal
 
-    pattern = seasonal.extract_seasonal_pattern(n_points=12)
-    print(f"  Seasonal coefficients calibrated")
-    print(f"  Seasonal range: {pattern['seasonal_adjustment'].min():.2f} to "
-          f"{pattern['seasonal_adjustment'].max():.2f}")
-except Exception as e:
-    print(f"  Seasonal calibration: {e}")
+        pattern = seasonal.extract_seasonal_pattern(n_points=12)
+        print(f"  {product}: seasonal range = {pattern['seasonal_adjustment'].min():+.3f} to "
+              f"{pattern['seasonal_adjustment'].max():+.3f}")
+    except Exception as e:
+        print(f"  {product}: Seasonal calibration: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -198,26 +206,13 @@ except Exception as e:
 # ═══════════════════════════════════════════════════════════════════════
 print(f"\n{'='*72}\n  STEP 3: RISK ANALYTICS & SCENARIO ANALYSIS\n{'='*72}\n")
 
-cl_strip = strips.get("CL", [])
-if cl_strip:
-    cl_settlements = [
-        FuturesSettlement(
-            product=s["product"], contract_code=s["contract_code"],
-            settlement=s["settlement"], time_to_expiry=s["time_to_expiry"],
-        ) for s in cl_strip
-    ]
-else:
-    cl_settlements = [
-        FuturesSettlement(
-            product="CL", contract_code=f"CL{i+1:02d}",
-            settlement=cl_curve.forward_price(t), time_to_expiry=t,
-        ) for i, t in enumerate(cl_curve.times)
-    ]
+print(f"  C++ curves: {list(cpp_curves.keys())} "
+      f"(method={cpp_curves['CL'].interpolation_method()})")
 
-pricer = FuturesPricer(cl_curve)
-risk = RiskAnalytics(bootstrapper, cl_settlements)
+# Python pricers — only needed for _find_tenor() logic
+pricers = {product: FuturesPricer(c) for product, c in curves.items()}
 
-print("--- Position Setup ---")
+print("\n--- Position Setup ---")
 portfolio = [
     FuturesPosition("CLK26", "CL", 50, "long", 72.50, "2026-04-20"),
     FuturesPosition("CLN26", "CL", 30, "long", 73.20, "2026-06-22"),
@@ -228,38 +223,192 @@ portfolio = [
 for pos in portfolio:
     print(f"  {pos}")
 
-print("\n--- Portfolio Mark-to-Market ---")
-mtm_df = pricer.portfolio_mtm(portfolio)
+print("\n--- Portfolio Mark-to-Market (C++ monotone convex) ---")
+mtm_rows = []
+for pos in portfolio:
+    # Use C++ pricer for this product
+    cpp_pricer = cpp_pricers.get(pos.product, cpp_pricers["CL"])
+    # Build C++ position
+    cpp_pos = _cpp.FuturesPosition()
+    cpp_pos.ticker = pos.ticker
+    cpp_pos.product = pos.product
+    cpp_pos.num_contracts = pos.num_contracts
+    cpp_pos.direction = pos.direction_sign
+    cpp_pos.entry_price = pos.entry_price
+    cpp_pos.contract_size = pos.contract_size
+    # Compute tenor using Python pricer (has _find_tenor logic)
+    py_pricer = pricers.get(pos.product, pricers["CL"])
+    tenor = py_pricer._find_tenor(pos)
+    # C++ MTM
+    cpp_mtm = cpp_pricer.mark_to_market(cpp_pos, tenor)
+    current_price = cpp_curves[pos.product].forward_price(tenor)
+    spec = CONTRACT_SPECS.get(pos.product, CONTRACT_SPECS["CL"])
+    mtm_rows.append({
+        "ticker": pos.ticker, "product": pos.product,
+        "direction": pos.direction, "contracts": pos.num_contracts,
+        "entry_price": pos.entry_price, "current_price": current_price,
+        "mtm_usd": cpp_mtm,
+        "mtm_per_contract": cpp_mtm / pos.num_contracts,
+        "contract_size": spec["contract_size"], "unit": spec["unit"],
+    })
+mtm_df = pd.DataFrame(mtm_rows)
+pd.set_option("display.float_format", lambda x: f"{x:,.2f}")
 print(mtm_df.to_string(index=False))
-print(f"\n  Total CL MTM: ${mtm_df['mtm_usd'].sum():,.0f}")
+pd.reset_option("display.float_format")
+print(f"\n  Total Portfolio MTM: ${mtm_df['mtm_usd'].sum():,.0f}")
 
-print("\n--- Parallel Delta (CL curve) ---")
+cl_positions = [pos for pos in portfolio if pos.product == "CL"]
+
+# ── C++ Hybrid Bump-and-Revalue Risk Analytics ──────────────────────
+# Python orchestrates settlement bumps; C++ kernel does all curve
+# construction and pricing (ForwardCurve + FuturesPricer).
+
+def _cpp_curve_from_setts(setts, bump_map=None, interp="monotone_convex"):
+    """Build a C++ ForwardCurve from settlements with optional bumps."""
+    times = [s.time_to_expiry for s in setts]
+    prices = [s.settlement + (bump_map.get(i, 0.0) if bump_map else 0.0)
+              for i, s in enumerate(setts)]
+    return _cpp.ForwardCurve(times, prices, interp)
+
+def _cpp_mtm(cpp_curve, pos, tenor):
+    """Mark a single position to market via C++ pricer."""
+    pricer = _cpp.FuturesPricer(cpp_curve)
+    p = _cpp.FuturesPosition()
+    p.ticker = pos.ticker
+    p.product = pos.product
+    p.num_contracts = pos.num_contracts
+    p.direction = pos.direction_sign
+    p.entry_price = pos.entry_price
+    p.contract_size = pos.contract_size
+    return pricer.mark_to_market(p, tenor)
+
+# Build per-product settlement lists (shared by delta, KCD, gamma)
+product_setts = {}
+for product in set(pos.product for pos in portfolio):
+    strip = strips.get(product, [])
+    if strip:
+        product_setts[product] = [
+            FuturesSettlement(
+                product=s["product"], contract_code=s["contract_code"],
+                settlement=s["settlement"], time_to_expiry=s["time_to_expiry"],
+            ) for s in strip
+        ]
+    else:
+        c = curves[product]
+        product_setts[product] = [
+            FuturesSettlement(
+                product=product, contract_code=f"{product}{i+1:02d}",
+                settlement=c.forward_price(t), time_to_expiry=t,
+            ) for i, t in enumerate(c.times)
+        ]
+
+print("\n--- Parallel Delta (C++ bump-and-revalue) ---")
 try:
     total_delta = 0.0
     for pos in portfolio:
-        delta = risk.parallel_delta(pos)
+        setts = product_setts[pos.product]
+        tenor = pricers[pos.product]._find_tenor(pos)
+        n = len(setts)
+        v_up = _cpp_mtm(_cpp_curve_from_setts(setts, {i: 1.0 for i in range(n)}), pos, tenor)
+        v_down = _cpp_mtm(_cpp_curve_from_setts(setts, {i: -1.0 for i in range(n)}), pos, tenor)
+        delta = (v_up - v_down) / 2.0
         total_delta += delta
         print(f"  {pos.ticker}: delta = ${delta:,.0f}")
     print(f"  Portfolio parallel delta: ${total_delta:,.0f}")
 except Exception as e:
     print(f"  Delta calculation: {e}")
 
-print("\n--- Scenario Analysis ---")
-scenario_engine = ScenarioEngine(bootstrapper, cl_settlements)
+print("\n--- 12-Tenor Key Contract Delta Ladder (C++) ---")
+try:
+    for pos in portfolio:
+        setts = product_setts[pos.product]
+        tenor = pricers[pos.product]._find_tenor(pos)
+        base_curve = _cpp_curve_from_setts(setts)
+        v_base = _cpp_mtm(base_curve, pos, tenor)
+        print(f"\n  {pos.ticker} ({pos.product}):")
+        for i, s in enumerate(setts):
+            v_bumped = _cpp_mtm(_cpp_curve_from_setts(setts, {i: 1.0}), pos, tenor)
+            kcd_val = v_bumped - v_base
+            bar = "#" * min(40, max(0, int(abs(kcd_val) / 500)))
+            print(f"    T={s.time_to_expiry:.3f}y: ${kcd_val:>12,.0f}  {bar}")
+except Exception as e:
+    print(f"  Key contract delta: {e}")
+
+print("\n--- Gamma (C++ Second-Order Sensitivity) ---")
+try:
+    total_gamma = 0.0
+    bump_sz = 5.0
+    for pos in portfolio:
+        setts = product_setts[pos.product]
+        tenor = pricers[pos.product]._find_tenor(pos)
+        n = len(setts)
+        v_base = _cpp_mtm(_cpp_curve_from_setts(setts), pos, tenor)
+        v_up = _cpp_mtm(_cpp_curve_from_setts(setts, {i: bump_sz for i in range(n)}), pos, tenor)
+        v_down = _cpp_mtm(_cpp_curve_from_setts(setts, {i: -bump_sz for i in range(n)}), pos, tenor)
+        g = (v_up + v_down - 2.0 * v_base) / (bump_sz ** 2)
+        total_gamma += g
+        print(f"  {pos.ticker}: gamma = ${g:,.2f} per ($1)^2")
+    print(f"  Portfolio gamma: ${total_gamma:,.2f} per ($1)^2")
+except Exception as e:
+    print(f"  Gamma calculation: {e}")
+
+print("\n--- Scenario Analysis (C++ bump-and-revalue, all products) ---")
+
+def _scenario_bumps(setts, scenario):
+    """Compute per-settlement bump map for a scenario (parallel/twist/custom)."""
+    n = len(setts)
+    tenors = np.array([s.time_to_expiry for s in setts])
+    bumps = np.zeros(n)
+    stype = scenario["type"]
+    if stype == "parallel":
+        bumps[:] = scenario["shift_usd"]
+    elif stype == "twist":
+        front_usd, back_usd = scenario["front_usd"], scenario["back_usd"]
+        t_min, t_max = tenors.min(), tenors.max()
+        if t_max > t_min:
+            for i, t in enumerate(tenors):
+                w = (t - t_min) / (t_max - t_min)
+                bumps[i] = front_usd * (1 - w) + back_usd * w
+        else:
+            bumps[:] = (front_usd + back_usd) / 2
+    elif stype == "custom":
+        bbt = scenario.get("bumps_by_tenor", {})
+        if bbt:
+            ct = sorted(bbt.keys())
+            cb = [bbt[t] for t in ct]
+            for i, t in enumerate(tenors):
+                bumps[i] = np.interp(t, ct, cb)
+    return {i: float(b) for i, b in enumerate(bumps)}
+
 for name, scenario in list(STANDARD_SCENARIOS.items())[:4]:
     try:
-        results = scenario_engine.run_scenario(scenario, portfolio)
-        total_pnl = results["scenario_pnl"].sum() if "scenario_pnl" in results.columns else 0
+        total_pnl = 0.0
+        for pos in portfolio:
+            setts = product_setts.get(pos.product)
+            if not setts:
+                continue
+            tenor = pricers[pos.product]._find_tenor(pos)
+            bump_map = _scenario_bumps(setts, scenario)
+            v_base = _cpp_mtm(_cpp_curve_from_setts(setts), pos, tenor)
+            v_scen = _cpp_mtm(_cpp_curve_from_setts(setts, bump_map), pos, tenor)
+            total_pnl += v_scen - v_base
         print(f"  {name:25s} -> P&L: ${total_pnl:>12,.0f}")
     except Exception as e:
         print(f"  {name:25s} -> Error: {e}")
 
-print("\n--- Roll Yield Analysis ---")
-roll_calc = RollYieldCalculator(cl_curve)
-matrix = roll_calc.roll_yield_matrix("CL")
-if len(matrix) > 0:
+print("\n--- Roll Yield Analysis (All Products) ---")
+for product, product_name in ENERGY_PRODUCTS.items():
+    if product not in curves:
+        continue
+    curve = curves[product]
+    roll_calc = RollYieldCalculator(curve)
+    matrix = roll_calc.roll_yield_matrix(product)
+    if len(matrix) == 0:
+        print(f"\n  {product} ({product_name}): no adjacent pairs")
+        continue
+    print(f"\n  {product} ({product_name}):")
     print(matrix[["front_tenor", "back_tenor", "roll_yield_ann", "regime"]].to_string(index=False))
-    best = roll_calc.best_roll_trades("CL", top_n=3)
+    best = roll_calc.best_roll_trades(product, top_n=3)
     if (best["roll_yield_ann"] < 0).all():
         label = "Largest carry cost (contango)"
     elif (best["roll_yield_ann"] > 0).all():
@@ -270,6 +419,35 @@ if len(matrix) > 0:
     for _, row in best.iterrows():
         print(f"    {row['front_tenor']:.2f}y -> {row['back_tenor']:.2f}y: "
               f"{row['roll_yield_ann']*100:+.1f}% ({row['regime']})")
+
+print("\n--- Carry Analysis (All Products) ---")
+for product, product_name in ENERGY_PRODUCTS.items():
+    if product not in curves:
+        continue
+    curve = curves[product]
+    roll_calc = RollYieldCalculator(curve)
+    print(f"\n  {product} ({product_name}):")
+
+    # Convenience yield curve
+    cy_df = roll_calc.convenience_yield_curve()
+    if len(cy_df) > 0:
+        print("  Convenience Yield Curve:")
+        for _, row in cy_df.iterrows():
+            print(f"    {row['tenor']:.2f}y  fwd=${row['forward_price']:.4f}  "
+                  f"conv_yield={row['convenience_yield']*100:+.2f}%")
+
+    # Total carry for adjacent pairs
+    tenors = [t for t in curve.times if t > 0]
+    if len(tenors) >= 2:
+        print("  Total Carry (roll yield + convenience yield):")
+        for i in range(len(tenors) - 1):
+            t1, t2 = tenors[i], tenors[i + 1]
+            carry = roll_calc.total_carry(t1, t2)
+            ry = roll_calc.roll_yield(t1, t2)
+            cy = roll_calc.convenience_yield(t1)
+            print(f"    {t1:.2f}y -> {t2:.2f}y: "
+                  f"carry={carry*100:+.2f}%  "
+                  f"(roll={ry.roll_yield_ann*100:+.2f}% + conv={cy*100:+.2f}%)")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -355,16 +533,102 @@ print(f"  Generated {len(rfqs)} RFQs")
 print(f"  Product mix: {rfqs['product'].value_counts().to_dict()}")
 print(f"  Segment mix: {rfqs['client_segment'].value_counts().to_dict()}")
 
-print("\n--- Win Probability Model ---")
+# ── Win Probability Model: Training Pipeline ──────────────────────────
+print("\n--- Win Probability Model: Training ---")
+training_data = WinProbabilityModel.generate_training_data(n_samples=5000, seed=42)
+print(f"  Generated {len(training_data)} synthetic RFQs for training")
+print(f"  Features: spread_bps, log_notional, volatility, session_hour, client_segment, product")
+print(f"  Overall win rate: {training_data['won'].mean():.1%}")
+
+# Temporal train-test split
+train_df, test_df = WinProbabilityModel.temporal_train_test_split(training_data, train_frac=0.8)
+print(f"  Temporal split: {len(train_df)} train "
+      f"({train_df['timestamp'].iloc[0].strftime('%b %d')}–"
+      f"{train_df['timestamp'].iloc[-1].strftime('%b %d')}) / "
+      f"{len(test_df)} test "
+      f"({test_df['timestamp'].iloc[0].strftime('%b %d')}–"
+      f"{test_df['timestamp'].iloc[-1].strftime('%b %d')})")
+
+# Train logistic regression
 win_model = WinProbabilityModel()
+X_train = win_model.prepare_features(train_df)
+y_train = train_df["won"].values
+X_test = win_model.prepare_features(test_df)
+y_test = test_df["won"].values
+
+print(f"  Training logistic regression (2000 iterations)...")
+losses = win_model.calibrate(X_train, y_train, lr=0.01, n_iter=2000)
+
+# Evaluate on train and test
+train_pred = win_model._sigmoid(X_train @ win_model.beta)
+test_pred = win_model._sigmoid(X_test @ win_model.beta)
+train_loss = -np.mean(y_train * np.log(train_pred + 1e-12) + (1 - y_train) * np.log(1 - train_pred + 1e-12))
+test_loss = -np.mean(y_test * np.log(test_pred + 1e-12) + (1 - y_test) * np.log(1 - test_pred + 1e-12))
+print(f"  Log-loss: train={train_loss:.3f}, test={test_loss:.3f}")
+
+# Trained coefficients
+print(f"\n  Trained coefficients:")
+feat_names = WinProbabilityModel.feature_names()
+coef_desc = {
+    "intercept": "base log-odds",
+    "spread_bps": "wider -> lower win",
+    "log_notional": "larger trades harder",
+    "volatility": "high vol -> less eager",
+    "session_hour": "midday slightly easier",
+}
+for name, coef in zip(feat_names, win_model.beta):
+    desc = coef_desc.get(name, "")
+    desc_str = f"  ({desc})" if desc else ""
+    print(f"    {name:18s}: {coef:+.3f}{desc_str}")
+
+# Decile calibration
+print(f"\n  Decile Calibration (test set):")
+cal = WinProbabilityModel.decile_calibration(y_test, test_pred)
+print(f"    {'Decile':>6s}  {'Predicted':>9s}  {'Actual':>7s}  {'Count':>5s}")
+for row in cal:
+    print(f"    {row['decile']:6d}  {row['pred_mean']:9.3f}  {row['actual_mean']:7.3f}  {row['count']:5d}")
+
+# Drift detection (PSI)
+print(f"\n  Drift Detection (PSI, train vs test):")
+drift = WinProbabilityModel.detect_drift(X_train, X_test, feature_names=feat_names)
+for row in drift:
+    if row["feature"] == "intercept":
+        continue
+    print(f"    {row['feature']:18s}: PSI={row['psi']:.3f} -- {row['status']}")
+
+# Sample predictions on live RFQs
 sample = rfqs.head(5).copy()
 sample["spread_bps"] = 0.5
 sample["volatility"] = 0.25
 probs = win_model.predict_proba(sample)
-print(f"  Sample win probabilities (at 0.5bps): {[f'{p:.1%}' for p in probs]}")
+print(f"\n  Live RFQ predictions (at 0.5bps): {[f'{p:.1%}' for p in probs]}")
 
-print("\n--- Quote Optimisation ---")
-optimizer = QuoteOptimizer(win_model=win_model)
+# ── Alpha-Informed Directional Skew ──────────────────────────────────
+print("\n--- Alpha-Informed Directional Skew ---")
+alpha_skews = {
+    "CL": composite,
+    "HO": composite * 0.7,  # crude-correlated product
+    "RB": composite * 0.7,  # crude-correlated product
+    "NG": ng_composite,
+}
+for prod_code, skew in alpha_skews.items():
+    pct = skew * 10
+    if skew > 0.05:
+        action = "tighten bid, widen ask (favour longs)"
+    elif skew < -0.05:
+        action = "widen bid, tighten ask (favour shorts)"
+    else:
+        action = "symmetric"
+    print(f"  {prod_code}: alpha={skew:+.2f} -> skew={pct:+.1f}% ({action})")
+
+# ── Quote Optimisation (alpha skew + inventory penalty) ──────────────
+print("\n--- Quote Optimisation (alpha skew + inventory risk) ---")
+optimizer = QuoteOptimizer(
+    win_model=win_model,
+    alpha_skews=alpha_skews,
+    current_delta={"CL": 0, "HO": 0, "RB": 0, "NG": 0},
+    risk_lambda=5e-12,
+)
 mid_prices = {"CL": 72.50, "HO": 2.35, "RB": 2.45, "NG": 3.80}
 quotes = optimizer.optimize_batch(rfqs, mid_prices)
 print(f"  Optimised {len(quotes)} quotes")
@@ -377,66 +641,31 @@ for product in ["CL", "HO", "RB", "NG"]:
         sub = quotes[mask]
         print(f"    {product}: {len(sub)} quotes, "
               f"avg spread={sub['spread'].mean():.4f}, "
+              f"avg bid/ask={sub['bid_spread'].mean():.4f}/{sub['ask_spread'].mean():.4f}, "
               f"E[PnL]=${sub['expected_pnl'].sum():,.0f}")
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# STEP 6: Execution Planning & Market Impact
-# ═══════════════════════════════════════════════════════════════════════
-print(f"\n{'='*72}\n  STEP 6: EXECUTION PLANNING & MARKET IMPACT ANALYSIS\n{'='*72}\n")
-
-print("--- Almgren-Chriss Impact Model ---")
-impact_model = AlmgrenChrissModel()
-for product, size in [("CL", 100), ("HO", 50), ("RB", 50), ("NG", 75)]:
-    est = impact_model.estimate_impact(product, size)
-    print(f"  {product} {size} lots: cost=${est.total_cost_usd:,.0f} "
-          f"({est.cost_bps:.1f}bps), participation={est.participation_rate:.1%}")
-
-print("\n--- Strategy Comparison (CL 200 lots) ---")
-comparison = impact_model.compare_strategies("CL", 200)
-print(comparison.to_string(index=False))
-
-print("\n--- Optimal Execution Trajectory ---")
-trajectory = impact_model.optimal_trajectory("CL", 200, n_slices=10)
-for i, frac in enumerate(trajectory):
-    bar = "#" * int(frac * 40)
-    print(f"  Slice {i:2d}: {frac:5.1%} {bar}")
-
-print("\n--- Execution Schedules ---")
-for SchedulerClass, name in [(TWAPScheduler, "TWAP"), (VWAPScheduler, "VWAP"),
-                              (AdaptiveScheduler, "Adaptive")]:
-    if name == "Adaptive":
-        scheduler = SchedulerClass(urgency=0.7)
-    else:
-        scheduler = SchedulerClass()
-
-    sched = scheduler.schedule("CL", 100) if name == "VWAP" else scheduler.schedule("CL", 100, n_slices=10)
-    df = sched.to_dataframe()
-    total = df["target_contracts"].sum()
-    print(f"\n  {name} ({sched.strategy}):")
-    print(f"    Slices: {len(df)}, Total contracts: {total}")
-    if len(df) > 0:
-        print(f"    First: {df.iloc[0]['time_label']} ({df.iloc[0]['target_contracts']} lots)")
-        print(f"    Last:  {df.iloc[-1]['time_label']} ({df.iloc[-1]['target_contracts']} lots)")
-
-print("\n--- Order Book Simulation ---")
-sim = OrderSimulator(seed=42)
-book = sim.generate_book("CL", 72.50)
-print(f"  CL book: mid={book.mid_price:.2f}, spread={book.spread:.4f}")
-print(f"  Top of book: bid={book.bids[0].price:.2f}x{book.bids[0].size} "
-      f"/ ask={book.asks[0].price:.2f}x{book.asks[0].size}")
-
-exec_df = sim.simulate_execution("CL", "buy", 50, 72.50, n_slices=5)
-if len(exec_df) > 0:
-    vwap = (exec_df["price"] * exec_df["size"]).sum() / exec_df["size"].sum()
-    avg_slip = (exec_df["slippage"] * exec_df["size"]).sum() / exec_df["size"].sum()
-    print(f"\n  Execution result: VWAP={vwap:.4f}, avg slippage={avg_slip:.4f}")
+# ── Optimizer vs Flat Pricing Comparison ─────────────────────────────
+print("\n--- Optimizer vs Flat Pricing ---")
+# Flat baseline uses same win model for fair comparison
+flat_optimizer = QuoteOptimizer(win_model=win_model)  # same model, no alpha, no inventory
+flat_quotes = flat_optimizer.optimize_batch(rfqs, mid_prices)
+print(f"  {'Metric':20s} {'Optimizer':>12s} {'Flat':>12s} {'Edge':>12s}")
+print(f"  {'-'*56}")
+opt_epnl = quotes['expected_pnl'].sum()
+flat_epnl = flat_quotes['expected_pnl'].sum()
+print(f"  {'Total E[PnL]':20s} ${opt_epnl:>11,.0f} ${flat_epnl:>11,.0f} ${opt_epnl - flat_epnl:>+11,.0f}")
+opt_wp = quotes['win_probability'].mean()
+flat_wp = flat_quotes['win_probability'].mean()
+print(f"  {'Avg Win Prob':20s} {opt_wp:>11.1%} {flat_wp:>11.1%} {opt_wp - flat_wp:>+11.1%}")
+opt_spread = quotes['spread'].mean()
+flat_spread = flat_quotes['spread'].mean()
+print(f"  {'Avg Spread':20s} {opt_spread:>11.4f} {flat_spread:>11.4f} {opt_spread - flat_spread:>+11.4f}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# STEP 7: Portfolio Summary & KDB+ Storage
+# STEP 6: KDB+ Storage & Databento L2 Data
 # ═══════════════════════════════════════════════════════════════════════
-print(f"\n{'='*72}\n  STEP 7: PORTFOLIO SUMMARY & KDB+ STORAGE\n{'='*72}\n")
+print(f"\n{'='*72}\n  STEP 6: KDB+ STORAGE & DATABENTO L2 DATA\n{'='*72}\n")
 
 print("--- KDB+ Storage ---")
 from config import KDB_HOST, KDB_PORT
@@ -468,6 +697,7 @@ if not _kdb_listening(KDB_HOST, KDB_PORT):
     except Exception as e:
         print(f"  Could not start KDB+: {e}")
 
+kdb = None
 try:
     kdb = KDBInterface(KDBConfig(host=KDB_HOST, port=KDB_PORT))
     kdb.create_tables()
@@ -493,31 +723,309 @@ except Exception as e:
     print(f"  KDB+ connection failed: {e}")
     print(f"  (Requires running KDB+ instance on {KDB_HOST}:{KDB_PORT})")
 
-print("\n--- Databento L2 Data ---")
+print("\n--- Databento L2 Data (All Products) ---")
 from config import get_databento_api_key
 from shared.databento_loader import front_month_symbol
+l2_books = {}  # product -> DataFrame of MBP-10 snapshots
 db_key = get_databento_api_key()
 if db_key:
     try:
         db_loader = DatabentoLoader(DatabentoConfig(api_key=db_key))
-        db_date = "2025-01-15"
-        cl_symbol = front_month_symbol("CL", db_date)
-        print(f"  Symbol: {cl_symbol} on {db_date}")
-        books = db_loader.load_book_snapshots(cl_symbol, db_date, n_snapshots=50)
-        trades = db_loader.load_trades(cl_symbol, db_date, n_trades=200)
-        print(f"  Book snapshots: {len(books)} rows")
-        print(f"  Trade records: {len(trades)} rows")
-        if len(books) > 0:
-            best_bid = books["bid_px_00"].iloc[0]
-            best_ask = books["ask_px_00"].iloc[0]
-            print(f"  First snapshot: bid={best_bid:.2f}, ask={best_ask:.2f}")
+        db_date = DEFAULT_VALUATION_DATE
+        for _prod in ["CL", "HO", "RB", "NG"]:
+            _sym = front_month_symbol(_prod, db_date)
+            try:
+                _snaps = db_loader.load_book_snapshots(_sym, db_date, n_snapshots=10000)
+                if len(_snaps) > 0:
+                    l2_books[_prod] = _snaps
+                    print(f"  {_prod} ({_sym}): {len(_snaps)} snapshots, "
+                          f"bid={_snaps['bid_px_00'].iloc[0]:.4f}, "
+                          f"ask={_snaps['ask_px_00'].iloc[0]:.4f}")
+            except Exception as e:
+                print(f"  {_prod}: L2 load failed ({e})")
+        print(f"  Loaded L2 data for {len(l2_books)} products: {list(l2_books.keys())}")
     except Exception as e:
         print(f"  Databento API error: {e}")
         print(f"  (Requires valid Databento subscription and available data)")
 else:
     print("  Databento API key not set; skipping L2 data load")
 
-print("\n--- Markout P&L Analysis ---")
+# Store L2 book data in KDB+ if available
+_l2_schema_cols = (["ts_event"]
+                   + [f"bid_px_{i:02d}" for i in range(10)]
+                   + [f"ask_px_{i:02d}" for i in range(10)]
+                   + [f"bid_sz_{i:02d}" for i in range(10)]
+                   + [f"ask_sz_{i:02d}" for i in range(10)])
+if len(l2_books) > 0 and kdb is not None:
+    for _prod, _snaps in l2_books.items():
+        try:
+            l2_df = _snaps[[c for c in _l2_schema_cols if c in _snaps.columns]].copy()
+            l2_df["product"] = _prod
+            l2_df = l2_df[["ts_event", "product"]
+                          + [c for c in _l2_schema_cols if c != "ts_event"]]
+            kdb.insert_l2_books(l2_df)
+            print(f"  Stored {len(l2_df)} {_prod} L2 snapshots in KDB+")
+        except Exception as e:
+            print(f"  {_prod} L2 KDB+ storage failed: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# STEP 7: Execution Planning & Market Impact
+# ═══════════════════════════════════════════════════════════════════════
+print(f"\n{'='*72}\n  STEP 7: EXECUTION PLANNING & MARKET IMPACT ANALYSIS\n{'='*72}\n")
+
+print("--- Almgren-Chriss Impact Model ---")
+impact_model = AlmgrenChrissModel()
+for product, size in [("CL", 100), ("HO", 50), ("RB", 50), ("NG", 75)]:
+    est = impact_model.estimate_impact(product, size)
+    print(f"  {product} {size} lots: cost=${est.total_cost_usd:,.0f} "
+          f"({est.total_cost_bps:.1f}bps), participation={est.participation_rate:.1%}, "
+          f"optimal horizon={est.optimal_horizon_min:.0f}min")
+
+print("\n--- Strategy Comparison (CL 200 lots) ---")
+comparison = impact_model.compare_strategies("CL", 200, price=72.50)
+print(comparison.to_string(index=False))
+
+print("\n--- Optimal Execution Trajectory ---")
+trajectory = impact_model.optimal_trajectory("CL", 200, n_slices=10)
+for i, frac in enumerate(trajectory):
+    bar = "#" * int(frac * 40)
+    print(f"  Slice {i:2d}: {frac:5.1%} {bar}")
+
+# ── Multi-Product Execution Backtest (TWAP / VWAP / Adaptive) ────────
+print("\n--- Multi-Product Execution Backtest (Databento L2) ---")
+sim = OrderSimulator(seed=42)
+_CS = {"CL": 1000, "HO": 42000, "RB": 42000, "NG": 10000}
+exec_sizes = {"CL": 100, "HO": 50, "RB": 50, "NG": 75}
+all_exec_fills = []  # collect fills for KDB storage
+is_results = []      # implementation shortfall records
+
+if len(l2_books) == 0:
+    print("  No Databento L2 data available -- execution backtest skipped")
+    print("  (Set DATABENTO_API_KEY to enable real L2 execution)")
+else:
+    for product, qty in exec_sizes.items():
+        if product not in l2_books:
+            print(f"\n  {product}: no L2 data -- skipped")
+            continue
+
+        prod_books = l2_books[product]
+        cs = _CS[product]
+
+        # Arrival mid from first L2 snapshot
+        arrival_book = L2Book.from_databento_row(product, prod_books.iloc[0])
+        arrival_mid = arrival_book.mid_price
+
+        print(f"\n  {product} ({qty} lots, Databento L2, "
+              f"mid={arrival_mid:.4f}, spread={arrival_book.spread:.6f}):")
+        print(f"    Top of book: bid={arrival_book.bids[0].price:.4f}"
+              f"x{arrival_book.bids[0].size} / "
+              f"ask={arrival_book.asks[0].price:.4f}"
+              f"x{arrival_book.asks[0].size}")
+
+        # Compute optimal horizon from Almgren-Chriss for this product/qty
+        adaptive_sched = AdaptiveScheduler(kappa=1.5)
+        _opt_sched = adaptive_sched.schedule(product, qty, n_slices=10)
+        optimal_horizon = _opt_sched.total_duration_min
+        print(f"    Optimal horizon (A-C): {optimal_horizon:.0f} min")
+
+        for SchedulerClass, sname in [(TWAPScheduler, "TWAP"),
+                                       (VWAPScheduler, "VWAP"),
+                                       (AdaptiveScheduler, "Adaptive")]:
+            if sname == "Adaptive":
+                scheduler = SchedulerClass(kappa=1.5)
+            else:
+                scheduler = SchedulerClass()
+
+            # TWAP/VWAP use full session; Adaptive uses optimal horizon
+            n_sl = 10
+            sched_horizon = optimal_horizon if sname == "Adaptive" else 330.0
+            sched = scheduler.schedule(product, qty, n_slices=n_sl,
+                                       duration_min=sched_horizon)
+            slice_targets = [s.target_contracts for s in sched.slices]
+
+            # Execute against real L2 snapshots using schedule targets
+            exec_df = sim.simulate_execution_real(
+                product, "buy", qty, prod_books,
+                slice_targets=slice_targets,
+                duration_min=sched_horizon)
+
+            if len(exec_df) == 0:
+                continue
+
+            exec_vwap = ((exec_df["price"] * exec_df["size"]).sum()
+                         / exec_df["size"].sum())
+            avg_slip = ((exec_df["slippage"] * exec_df["size"]).sum()
+                        / exec_df["size"].sum())
+            total_filled = int(exec_df["size"].sum())
+
+            # Implementation Shortfall = |exec_VWAP - arrival| * qty * cs
+            is_dollar = abs(exec_vwap - arrival_mid) * total_filled * cs
+            is_bps = abs(exec_vwap - arrival_mid) / arrival_mid * 10000
+
+            # Almgren-Chriss estimated cost at this horizon
+            ac_est = impact_model.estimate_impact(
+                product, qty, optimal_horizon, price=arrival_mid)
+            print(f"    {sname:8s}: VWAP={exec_vwap:.4f}, "
+                  f"slip={avg_slip:.6f}, "
+                  f"IS=${is_dollar:,.0f} ({is_bps:.2f}bps), "
+                  f"A-C cost={ac_est.total_cost_bps:.1f}bps, "
+                  f"risk={ac_est.timing_risk_bps:.1f}bps")
+
+            is_results.append({
+                "product": product, "strategy": sname,
+                "qty": total_filled, "arrival_mid": arrival_mid,
+                "exec_vwap": exec_vwap, "slippage_avg": avg_slip,
+                "is_dollar": is_dollar, "is_bps": is_bps,
+                "ac_cost_bps": ac_est.total_cost_bps,
+                "ac_risk_bps": ac_est.timing_risk_bps,
+                "ac_cost_usd": ac_est.total_cost_usd,
+                "horizon_min": optimal_horizon,
+            })
+
+            # Collect fills for KDB storage
+            for _, frow in exec_df.iterrows():
+                all_exec_fills.append({
+                    "fill_id": len(all_exec_fills) + 1,
+                    "product": product, "trd_side": "buy",
+                    "price": frow["price"], "qty": int(frow["size"]),
+                    "slippage": frow["slippage"],
+                })
+
+    # ── Implementation Shortfall Summary ─────────────────────────────
+    if is_results:
+        print("\n--- Implementation Shortfall Summary ---")
+        is_df = pd.DataFrame(is_results)
+        print(f"  {'Product':6s} {'Strategy':10s} {'Horizon':>7s} "
+              f"{'IS ($)':>10s} {'IS(bps)':>8s} "
+              f"{'A-C cost':>9s} {'Risk':>9s}")
+        print(f"  {'-'*65}")
+        for _, r in is_df.iterrows():
+            print(f"  {r['product']:6s} {r['strategy']:10s} "
+                  f"{r['horizon_min']:6.0f}m "
+                  f"${r['is_dollar']:>9,.0f} "
+                  f"{r['is_bps']:>7.2f} "
+                  f"{r['ac_cost_bps']:>8.1f}bps "
+                  f"{r['ac_risk_bps']:>8.1f}bps")
+
+        print("\n  Best strategy per product (lowest |IS|):")
+        for product in exec_sizes:
+            prod_is = is_df[is_df["product"] == product]
+            if len(prod_is) > 0:
+                best = prod_is.loc[prod_is["is_dollar"].abs().idxmin()]
+                print(f"    {product}: {best['strategy']} "
+                      f"(IS=${best['is_dollar']:+,.0f})")
+
+    # ── Volatile Day Comparison (Adaptive vs TWAP) ──────────────────
+    # Load a volatile day to demonstrate Adaptive's risk advantage
+    if db_key:
+        vol_date = "2026-02-20"
+        vol_sym = front_month_symbol("CL", vol_date)
+        try:
+            vol_snaps = db_loader.load_book_snapshots(vol_sym, vol_date, n_snapshots=500)
+            if len(vol_snaps) > 0:
+                vol_mids = (vol_snaps["bid_px_00"] + vol_snaps["ask_px_00"]) / 2
+                print(f"\n--- Volatile Day Backtest: CL {vol_date} ---")
+                print(f"  {vol_sym}: {len(vol_snaps)} snapshots, "
+                      f"mid {vol_mids.iloc[0]:.2f} -> {vol_mids.iloc[-1]:.2f} "
+                      f"(drift={(vol_mids.iloc[-1]-vol_mids.iloc[0])/vol_mids.iloc[0]*10000:+.0f}bps)")
+
+                vol_qty = 100
+                vol_cs = 1000
+                vol_arrival = L2Book.from_databento_row("CL", vol_snaps.iloc[0])
+                vol_mid = vol_arrival.mid_price
+
+                # Sell execution: price dropped, so selling late = worse fills
+                adaptive_s = AdaptiveScheduler(kappa=1.5)
+                opt_sched = adaptive_s.schedule("CL", vol_qty, n_slices=10)
+                opt_h = opt_sched.total_duration_min
+
+                for Cls, sname in [(TWAPScheduler, "TWAP"),
+                                    (VWAPScheduler, "VWAP"),
+                                    (AdaptiveScheduler, "Adaptive")]:
+                    if sname == "Adaptive":
+                        sched = Cls(kappa=1.5).schedule("CL", vol_qty, n_slices=10, duration_min=opt_h)
+                        h = opt_h
+                    else:
+                        sched = Cls().schedule("CL", vol_qty, n_slices=10, duration_min=330.0)
+                        h = 330.0
+                    targets = [s.target_contracts for s in sched.slices]
+                    edf = sim.simulate_execution_real(
+                        "CL", "sell", vol_qty, vol_snaps,
+                        slice_targets=targets, duration_min=h)
+                    if len(edf) == 0:
+                        continue
+                    evwap = (edf["price"] * edf["size"]).sum() / edf["size"].sum()
+                    filled = int(edf["size"].sum())
+                    is_d = abs(vol_mid - evwap) * filled * vol_cs
+                    is_b = abs(vol_mid - evwap) / vol_mid * 10000
+                    print(f"  {sname:8s} [{h:.0f}min]: sell VWAP={evwap:.2f}, "
+                          f"IS=${is_d:+,.0f} ({is_b:+.1f}bps)")
+        except Exception as e:
+            print(f"\n  Volatile day backtest failed: {e}")
+
+    # ── Store Execution Fills in KDB+ ────────────────────────────────
+    if kdb is not None and len(all_exec_fills) > 0:
+        try:
+            fills_df = pd.DataFrame(all_exec_fills)
+            kdb.insert_fills(fills_df)
+            print(f"\n  Stored {len(fills_df)} execution fills in KDB+ "
+                  f"trd_fills table")
+            print(f"  Table counts: {kdb.table_counts()}")
+        except Exception as e:
+            print(f"\n  KDB+ fill storage failed: {e}")
+
+    # ── Post-Trade Execution Markout P&L Decomposition ───────────────
+    # Reuse Adaptive results from the backtest above for a proper
+    # 3-way cost decomposition: spread + market impact + timing/residual
+    print("\n--- Execution Markout P&L Decomposition ---")
+    if is_results:
+        is_df_all = pd.DataFrame(is_results)
+        for product, qty in exec_sizes.items():
+            if product not in l2_books:
+                continue
+            prod_rows = is_df_all[
+                (is_df_all["product"] == product)
+                & (is_df_all["strategy"] == "Adaptive")
+            ]
+            if len(prod_rows) == 0:
+                continue
+            r = prod_rows.iloc[0]
+
+            cs = _CS[product]
+            arrival_mid = r["arrival_mid"]
+            exec_vwap = r["exec_vwap"]
+            total_filled = int(r["qty"])
+            is_abs = abs(exec_vwap - arrival_mid)
+            is_bps = is_abs / arrival_mid * 10000
+
+            # Component 1: half-spread crossing
+            book = L2Book.from_databento_row(product, l2_books[product].iloc[0])
+            spread_cost = book.spread / 2 * total_filled * cs
+
+            # Component 2: market impact (Almgren-Chriss model)
+            impact_cost = r["ac_cost_usd"]
+
+            # Component 3: timing/residual = total IS - spread - impact
+            total_exec_cost = is_abs * total_filled * cs
+            timing_cost = total_exec_cost - spread_cost - impact_cost
+
+            print(f"\n  {product} ({qty} lots, Adaptive {r['horizon_min']:.0f}min):")
+            print(f"    Arrival mid    : {arrival_mid:.4f}")
+            print(f"    Exec VWAP      : {exec_vwap:.4f}")
+            print(f"    IS             : {is_abs:.6f} ({is_bps:.2f} bps)")
+            print(f"    Spread crossing: ${spread_cost:>+,.2f}")
+            print(f"    Market impact  : ${impact_cost:>+,.2f}")
+            print(f"    Timing/residual: ${timing_cost:>+,.2f}")
+            print(f"    Total exec cost: ${total_exec_cost:>+,.2f}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# STEP 8: Portfolio Summary & Markout Analysis
+# ═══════════════════════════════════════════════════════════════════════
+print(f"\n{'='*72}\n  STEP 8: PORTFOLIO SUMMARY & MARKOUT ANALYSIS\n{'='*72}\n")
+
+print("--- Markout P&L Analysis ---")
 analyzer = MarkoutAnalyzer()
 if quotes is not None and len(quotes) > 0:
     trade_sample = quotes.head(20).copy()
@@ -604,10 +1112,12 @@ if SHOW_PLOTS:
     axes[0].set_title("Almgren-Chriss Optimal Trajectory (CL 200 lots)")
     axes[0].grid(True, alpha=0.3)
     # Right: cost vs horizon
-    axes[1].plot(comparison["horizon_min"], comparison["cost_bps"], 's-', color=COLOURS["secondary"], linewidth=2)
+    axes[1].plot(comparison["horizon_min"], comparison["impact_bps"], 's-', color=COLOURS["secondary"], linewidth=2, label="Expected Cost")
+    axes[1].plot(comparison["horizon_min"], comparison["risk_bps"], 'o--', color=COLOURS["accent"], linewidth=2, label="Timing Risk (1σ)")
+    axes[1].legend()
     axes[1].set_xlabel("Execution Horizon (minutes)")
-    axes[1].set_ylabel("Total Cost (bps)")
-    axes[1].set_title("Market Impact vs Execution Horizon")
+    axes[1].set_ylabel("Cost (bps)")
+    axes[1].set_title("Impact vs Risk Tradeoff")
     axes[1].grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(PLOT_DIR / "execution_analysis.png", dpi=150, bbox_inches="tight")

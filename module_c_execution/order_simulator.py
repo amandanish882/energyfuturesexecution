@@ -3,7 +3,9 @@
 This module constructs synthetic Level 2 order books for NYMEX energy
 futures and simulates realistic multi-slice order execution by walking
 price levels, tracking slippage, and returning per-fill records as a
-DataFrame.
+DataFrame. It also supports execution against real Databento MBP-10
+Level 2 snapshots via ``L2Book.from_databento_row`` and
+``OrderSimulator.simulate_execution_real``.
 """
 
 import sys
@@ -57,6 +59,52 @@ class L2Book:
         self.product = product
         self.bids = bids if bids is not None else []
         self.asks = asks if asks is not None else []
+
+    @classmethod
+    def from_databento_row(cls, product, row):
+        """Build an L2Book from a Databento MBP-10 snapshot row.
+
+        Reads ten bid and ten ask price/size columns from a single row
+        of a Databento MBP-10 DataFrame and converts them into sorted
+        BookLevel lists. Levels with non-positive price or size are
+        skipped (e.g. price=0 means no level present at that depth).
+
+        Example column names for level 3:
+        ``bid_px_03``, ``bid_sz_03``, ``ask_px_03``, ``ask_sz_03``.
+
+        Args:
+            product: Commodity ticker symbol (e.g. ``"CL"``).
+            row: Dict-like row (e.g. a pandas Series or dict) with
+                columns ``bid_px_00``..``bid_px_09``,
+                ``ask_px_00``..``ask_px_09``,
+                ``bid_sz_00``..``bid_sz_09``,
+                ``ask_sz_00``..``ask_sz_09``.
+
+        Returns:
+            L2Book with real price levels. Bids sorted highest price
+            first, asks sorted lowest price first.
+        """
+        bids = []
+        asks = []
+
+        for i in range(10):
+            suffix = f"{i:02d}"  # "00", "01", ..., "09"
+
+            bid_px = float(row[f"bid_px_{suffix}"])
+            bid_sz = int(row[f"bid_sz_{suffix}"])
+            if bid_px > 0 and bid_sz > 0:
+                bids.append(BookLevel(price=bid_px, size=bid_sz))
+
+            ask_px = float(row[f"ask_px_{suffix}"])
+            ask_sz = int(row[f"ask_sz_{suffix}"])
+            if ask_px > 0 and ask_sz > 0:
+                asks.append(BookLevel(price=ask_px, size=ask_sz))
+
+        # Bids: highest first; asks: lowest first
+        bids.sort(key=lambda lvl: lvl.price, reverse=True)
+        asks.sort(key=lambda lvl: lvl.price)
+
+        return cls(product=product, bids=bids, asks=asks)
 
     @property
     def mid_price(self):
@@ -261,6 +309,88 @@ class OrderSimulator:
 
             book = self.generate_book(product, current_mid)
             fills = self.walk_book(book, side, slice_size)
+
+            for f in fills:
+                all_fills.append({
+                    "slice": i,
+                    "price": f.price,
+                    "size": f.size,
+                    "side": f.side,
+                    "slippage": f.slippage,
+                    "mid_at_entry": current_mid,
+                })
+
+            remaining -= slice_size
+
+        return pd.DataFrame(all_fills)
+
+    def simulate_execution_real(self, product, side, num_contracts,
+                                book_snapshots_df, n_slices=5,
+                                slice_targets=None, duration_min=330.0):
+        """Execute against real Databento L2 book snapshots.
+
+        Splits the parent order into child orders. If ``slice_targets``
+        is provided, each slice executes that many contracts (from an
+        execution schedule). Otherwise splits evenly into ``n_slices``.
+
+        Snapshots are selected from the portion of the DataFrame
+        corresponding to ``duration_min / 330`` of the session, so a
+        27-minute execution only uses the first ~8% of snapshots while
+        a full-session TWAP uses all of them. This correctly models
+        price drift exposure — shorter horizons see less price movement.
+
+        Args:
+            product: Commodity ticker symbol (``"CL"``, ``"HO"``,
+                ``"RB"``, or ``"NG"``).
+            side: Order direction; ``"buy"`` or ``"sell"``.
+            num_contracts: Total number of contracts to execute.
+            book_snapshots_df: DataFrame of Databento MBP-10 snapshots
+                with columns ``bid_px_00``..``bid_px_09``,
+                ``ask_px_00``..``ask_px_09``,
+                ``bid_sz_00``..``bid_sz_09``,
+                ``ask_sz_00``..``ask_sz_09``.
+            n_slices: Number of child slices to split the order into.
+                Ignored if ``slice_targets`` is provided. Defaults to 5.
+            slice_targets: Optional list of per-slice contract counts
+                from an execution schedule. If provided, ``n_slices``
+                is inferred from its length.
+            duration_min: Execution horizon in minutes. Snapshots are
+                selected from the first ``duration_min / 330`` fraction
+                of the DataFrame. Defaults to 330.0 (full session).
+
+        Returns:
+            DataFrame with one row per fill and columns:
+            ``slice``, ``price``, ``size``, ``side``,
+            ``slippage``, ``mid_at_entry``.
+        """
+        if slice_targets is not None:
+            n_slices = len(slice_targets)
+
+        remaining = num_contracts
+        n_rows = len(book_snapshots_df)
+        # Only use snapshots within our execution horizon
+        horizon_frac = min(duration_min / 330.0, 1.0)
+        usable_rows = max(n_slices, int(n_rows * horizon_frac))
+        all_fills = []
+
+        for i in range(n_slices):
+            if remaining <= 0:
+                break
+
+            if slice_targets is not None:
+                slice_size = min(slice_targets[i], remaining)
+            else:
+                contracts_per_slice = max(1, num_contracts // n_slices)
+                slice_size = min(contracts_per_slice, remaining)
+
+            # Pick snapshot from within the horizon window only
+            row_idx = min(i * usable_rows // n_slices, n_rows - 1)
+            row = book_snapshots_df.iloc[row_idx]
+
+            book = L2Book.from_databento_row(product, row)
+            fills = self.walk_book(book, side, slice_size)
+
+            current_mid = book.mid_price
 
             for f in fills:
                 all_fills.append({
