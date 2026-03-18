@@ -29,6 +29,7 @@ from module_b_trading.win_probability import WinProbabilityModel
 from module_b_trading.quote_optimizer import QuoteOptimizer
 from module_b_trading.carry_rolldown import RollYieldCalculator
 from module_b_trading.markout_pnl import MarkoutAnalyzer
+from module_b_trading.hedge_selector import HedgeSelector
 from module_c_execution.market_impact import AlmgrenChrissModel, ENERGY_FUTURES
 from module_c_execution.execution_scheduler import TWAPScheduler, VWAPScheduler, AdaptiveScheduler
 from module_c_execution.order_simulator import OrderSimulator, L2Book
@@ -258,6 +259,41 @@ pd.reset_option("display.float_format")
 print(f"\n  Total Portfolio MTM: ${mtm_df['mtm_usd'].sum():,.0f}")
 
 cl_positions = [pos for pos in portfolio if pos.product == "CL"]
+
+# ── Hedge Selection & Sizing ────────────────────────────────────────
+print("\n--- Hedge Selection & Sizing ---")
+hedge_mid_prices = {"CL": 72.50, "HO": 2.35, "RB": 2.45, "NG": 3.80}
+for product, curve in curves.items():
+    if curve is not None and len(curve.times) > 0:
+        hedge_mid_prices[product] = curve.forward_price(curve.times[0])
+
+hedge_selector = HedgeSelector(mid_prices=hedge_mid_prices, hedge_ratio=1.0)
+hedge_deltas, hedge_orders = hedge_selector.summary(portfolio)
+
+# A-C cost estimate and execution plan for each hedge order
+print(f"\n  Hedge execution plan:")
+impact_model_hedge = AlmgrenChrissModel()
+total_hedge_cost = 0
+for ho in hedge_orders:
+    est = impact_model_hedge.estimate_impact(
+        ho.product, ho.num_contracts,
+        price=hedge_mid_prices.get(ho.product, 70.0))
+    total_hedge_cost += est.total_cost_usd
+
+    # Show Adaptive scheduler slice plan
+    adaptive = AdaptiveScheduler(kappa=1.5)
+    sched = adaptive.schedule(ho.product, ho.num_contracts, n_slices=10,
+                               duration_min=est.optimal_horizon_min)
+    targets = [s.target_contracts for s in sched.slices]
+    spread_str = f" / {ho.spread_leg2}" if ho.spread_leg2 else ""
+
+    print(f"    {ho.direction.upper():4s} {ho.num_contracts:3d} "
+          f"{ho.ticker}{spread_str} [{ho.hedge_type}]: "
+          f"A-C cost={est.total_cost_bps:.1f}bps (${est.total_cost_usd:,.0f}), "
+          f"horizon={est.optimal_horizon_min:.0f}min")
+    print(f"         Adaptive slices: {targets}")
+
+print(f"\n  Total hedge cost estimate: ${total_hedge_cost:,.0f}")
 
 # ── C++ Hybrid Bump-and-Revalue Risk Analytics ──────────────────────
 # Python orchestrates settlement bumps; C++ kernel does all curve
