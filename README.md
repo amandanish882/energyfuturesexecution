@@ -190,12 +190,12 @@ scenario_engine = ScenarioEngine(bootstrapper, settlements)
 
 **Scenario P&L:**
 
-| Scenario | P&L |
-|----------|----:|
-| Parallel +$1 | Computed per position |
-| Parallel −$1 | Computed per position |
-| Curve steepener | Computed per position |
-| Spread compression | Computed per position |
+| Scenario | CLK26 (50L) | CLN26 (30L) | CLZ26 (20S) | Total |
+|----------|------------:|------------:|------------:|------:|
+| Parallel +$1 | +$50,000 | +$30,000 | −$20,000 | **+$60,000** |
+| Parallel −$1 | −$50,000 | −$30,000 | +$20,000 | **−$60,000** |
+| Curve steepener (front −$2, back +$2) | −$81,585 | −$27,214 | −$18,202 | **−$127,001** |
+| Spread compression (front +$1, back −$1) | +$40,792 | +$13,607 | +$9,101 | **+$63,500** |
 
 <p align="center"><img src="output/plots/scenario_heatmap.png" alt="Scenario P&L Heatmap" width="700"/></p>
 
