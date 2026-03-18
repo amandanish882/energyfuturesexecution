@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.env
+.venv
+venv/
+env/
+
+# IDE
+.vscode/
+.vs/
+.idea/
+
+# Data / cache
+data/
+*.parquet
+*.csv
+
+# Output (optional — remove if you want plots tracked)
+# output/
+
+# Pytest
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
