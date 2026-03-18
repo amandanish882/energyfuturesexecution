@@ -213,6 +213,67 @@ class InventorySignal(AlphaSignal):
         return self._clip(-z)  # above normal = bearish
 
 
+class NGStorageSignal(AlphaSignal):
+    """Alpha signal derived from EIA natural gas storage deviations.
+
+    Measures how far current working gas in underground storage deviates
+    from the 5-year seasonal norm, standardises the deviation over a
+    rolling window, and returns the negated z-score so that above-normal
+    storage is bearish (negative) and below-normal storage is bullish
+    (positive).
+
+    Attributes:
+        _seasonal: Dictionary mapping month integer (1-12) to the
+            expected seasonal average storage level in Bcf.
+        _history: Running list of observed seasonal-deviation
+            percentages used for rolling normalisation.
+    """
+
+    def __init__(self, seasonal_avg=None):
+        """Initialise the NG storage signal.
+
+        Args:
+            seasonal_avg: Optional dictionary mapping month integers
+                (1-12) to seasonal average storage levels in Bcf. If
+                None, a default seasonal pattern is used.
+        """
+        self._seasonal = seasonal_avg or {
+            1: 2600, 2: 2200, 3: 1800, 4: 1700, 5: 2000, 6: 2400,
+            7: 2800, 8: 3100, 9: 3350, 10: 3550, 11: 3400, 12: 3000,
+        }
+        self._history = []
+
+    def compute(self, ng_storage_level=0.0, month=1, **kwargs):
+        """Compute the NG storage signal as a clipped z-score.
+
+        Args:
+            ng_storage_level: Current working gas in storage (Bcf).
+                Defaults to 0.0.
+            month: Integer (1-12) for the current calendar month.
+                Defaults to 1.
+            **kwargs: Additional keyword arguments are ignored.
+
+        Returns:
+            Float in [-3.0, +3.0]. Positive = below-seasonal storage
+            (bullish); negative = above-seasonal storage (bearish).
+        """
+        seasonal_norm = self._seasonal.get(month, 2600)
+        deviation = ng_storage_level - seasonal_norm
+        deviation_pct = deviation / seasonal_norm if seasonal_norm > 0 else 0.0
+
+        self._history.append(deviation_pct)
+
+        if len(self._history) < 5:
+            return self._clip(-deviation_pct * 10)
+
+        arr = np.array(self._history[-60:])
+        mu, sigma = arr.mean(), arr.std()
+        if sigma < 1e-8:
+            return 0.0
+        z = (deviation_pct - mu) / sigma
+        return self._clip(-z)  # above normal = bearish
+
+
 class MomentumSignal(AlphaSignal):
     """Price momentum signal based on a fast vs. slow moving-average crossover.
 
@@ -453,7 +514,7 @@ class CompositeAlphaModel:
             **kwargs: Keyword arguments forwarded verbatim to each
                 registered signal's ``compute`` method (e.g.
                 ``forward_curve``, ``inventory_level``, ``month``,
-                ``price``, ``cl_price``, etc.).
+                ``price``, ``cl_price``, ``ng_storage_level``, etc.).
 
         Returns:
             Dictionary mapping each registered signal name to its
@@ -497,4 +558,27 @@ class CompositeAlphaModel:
         model.add_signal("momentum", MomentumSignal(), weight=0.20)
         model.add_signal("seasonal", SeasonalSignal("CL"), weight=0.15)
         model.add_signal("crack_spread", CrackSpreadSignal(), weight=0.10)
+        return model
+
+    @staticmethod
+    def default_ng_model():
+        """Create a pre-configured composite alpha model for natural gas.
+
+        Assembles a CompositeAlphaModel with four signals and their
+        associated weights:
+
+            - term_structure (TermStructureSignal): 30 %
+            - ng_storage (NGStorageSignal): 30 %
+            - momentum (MomentumSignal): 20 %
+            - seasonal (SeasonalSignal for 'NG'): 20 %
+
+        Returns:
+            A fully configured CompositeAlphaModel instance ready
+            for use with natural gas market data.
+        """
+        model = CompositeAlphaModel()
+        model.add_signal("term_structure", TermStructureSignal(), weight=0.30)
+        model.add_signal("ng_storage", NGStorageSignal(), weight=0.30)
+        model.add_signal("momentum", MomentumSignal(), weight=0.20)
+        model.add_signal("seasonal", SeasonalSignal("NG"), weight=0.20)
         return model

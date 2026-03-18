@@ -10,6 +10,7 @@ import numpy as np
 from module_b_trading.alpha_signals import (
     TermStructureSignal,
     InventorySignal,
+    NGStorageSignal,
     MomentumSignal,
     SeasonalSignal,
     CrackSpreadSignal,
@@ -45,6 +46,23 @@ class TestInventorySignal:
         sig = InventorySignal()
         val = sig.compute(inventory_level=400.0, month=6)
         assert val > 0  # below seasonal norm
+
+
+class TestNGStorageSignal:
+    def test_high_storage_bearish(self):
+        sig = NGStorageSignal()
+        val = sig.compute(ng_storage_level=4000.0, month=10)
+        assert val < 0  # well above October seasonal avg of 3550
+
+    def test_low_storage_bullish(self):
+        sig = NGStorageSignal()
+        val = sig.compute(ng_storage_level=1200.0, month=3)
+        assert val > 0  # well below March seasonal avg of 1800
+
+    def test_clipped(self):
+        sig = NGStorageSignal()
+        val = sig.compute(ng_storage_level=5000.0, month=3)
+        assert -3.0 <= val <= 3.0
 
 
 class TestMomentumSignal:
@@ -105,6 +123,19 @@ class TestCompositeAlphaModel:
             rb_price=2.45,
         )
         assert "composite" in result
+        assert -3.0 <= result["composite"] <= 3.0
+
+    def test_default_ng_model(self):
+        model = CompositeAlphaModel.default_ng_model()
+        result = model.compute_composite(
+            front_price=3.80,
+            deferred_price=4.10,
+            ng_storage_level=1800.0,
+            month=3,
+            price=3.80,
+        )
+        assert "composite" in result
+        assert "ng_storage" in result
         assert -3.0 <= result["composite"] <= 3.0
 
     def test_empty_model(self):
