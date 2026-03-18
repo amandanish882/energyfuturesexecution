@@ -22,7 +22,7 @@ from module_a_curves.curve_bootstrapper import (
 )
 from module_a_curves.seasonal_model import SeasonalForwardCurve
 from module_b_trading.futures_pricer import FuturesPricer, FuturesPosition, CONTRACT_SPECS
-from module_b_trading.scenario_engine import STANDARD_SCENARIOS
+from module_b_trading.scenario_engine import STANDARD_SCENARIOS, ScenarioEngine
 from module_b_trading.alpha_signals import CompositeAlphaModel
 from module_b_trading.rfq_generator import RFQGenerator
 from module_b_trading.win_probability import WinProbabilityModel
@@ -337,6 +337,9 @@ for product in set(pos.product for pos in portfolio):
                 settlement=c.forward_price(t), time_to_expiry=t,
             ) for i, t in enumerate(c.times)
         ]
+
+cl_setts = product_setts.get("CL", [])
+scenario_engine = ScenarioEngine(bootstrapper, cl_setts, valuation_date=DEFAULT_VALUATION_DATE, product="CL") if cl_setts else None
 
 print("\n--- Parallel Delta (C++ bump-and-revalue) ---")
 try:
@@ -1115,6 +1118,8 @@ if SHOW_PLOTS:
     scen_labels = []
     for name, scenario in list(STANDARD_SCENARIOS.items())[:6]:
         try:
+            if scenario_engine is None:
+                raise RuntimeError("scenario_engine not initialised")
             results = scenario_engine.run_scenario(scenario, portfolio[:3])
             if "scenario_pnl" in results.columns:
                 scen_data.append([results["scenario_pnl"].iloc[i] for i in range(min(3, len(results)))])
